@@ -35,6 +35,8 @@ git clone https://github.com/gloveboxes/rigol-mcp
 cd rigol-mcp
 ```
 
+### Docker
+
 Build the lightweight Alpine image and pass the scope address at runtime:
 
 ```sh
@@ -49,8 +51,39 @@ The MCP client normally launches this command. Use `-i`, not `-t`; no ports need
 publishing. See [Docker setup](docs/docker.md) for client configuration, persistent
 storage, hardened launch options and the stdio-versus-HTTP tradeoff.
 
-On Apple silicon, [Apple Container setup](docs/apple-container.md) provides an
-additional option using the same image and Dockerfile without Docker Desktop.
+### Apple Silicon Container
+
+On Apple silicon, Apple Container can build the same image and run it without
+Docker Desktop:
+
+```sh
+container system start
+container build -t rigol-mcp:local .
+```
+
+Initialize the Apple capture volume once so the non-root server can write to it:
+
+```sh
+container run --rm --progress none --user 0 \
+  --mount type=volume,source=rigol-mcp-data,target=/data \
+  --entrypoint sh rigol-mcp:local -c \
+  'mkdir -p /data/captures /data/screenshots && chown 10001:10001 /data /data/captures /data/screenshots'
+```
+
+Then launch the server:
+
+```sh
+export RIGOL_IP=192.168.1.123
+container run --rm -i --read-only --progress none \
+  --tmpfs /tmp --cap-drop ALL \
+  -e RIGOL_IP \
+  --mount type=volume,source=rigol-mcp-data,target=/data \
+  rigol-mcp:local
+```
+
+Apple Container keeps images and volumes separately from Docker. See the full
+[Apple Container setup](https://github.com/gloveboxes/rigol-mcp/blob/main/docs/apple-container.md)
+for VS Code configuration, storage and networking details.
 
 ## Configuration
 
