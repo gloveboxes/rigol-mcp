@@ -73,10 +73,9 @@ container run --rm --progress none --user 0 \
 Then launch the server:
 
 ```sh
-export RIGOL_IP=192.168.1.123
 container run --rm -i --read-only --progress none \
   --tmpfs /tmp --cap-drop ALL \
-  -e RIGOL_IP \
+  -e RIGOL_IP=192.168.1.123 \
   --mount type=volume,source=rigol-mcp-data,target=/data \
   rigol-mcp:local
 ```
