@@ -26,9 +26,19 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       # Installs the project (src/ layout) plus the test extra from the locked versions.
-      # Tests are fully offline — no instrument, NI-VISA, or system libusb required.
+      # Tests are fully offline — no instrument or network connection required.
       - name: Install dependencies
         run: uv sync --locked --extra test
 
       - name: Run tests
         run: uv run --no-sync pytest
+
+      - name: Build container
+        if: matrix.python-version == '3.12'
+        run: docker build -t rigol-mcp:ci .
+
+      - name: Test container stdio and runtime
+        if: matrix.python-version == '3.12'
+        env:
+          RIGOL_TEST_IMAGE: rigol-mcp:ci
+        run: uv run --no-sync pytest tests/test_container.py

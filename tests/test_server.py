@@ -1,5 +1,5 @@
-"""Unit tests for rigol_mcp.server — the _call retry/recovery wrapper and the
-backend-aware screenshot reconnect. VISA access is faked; no hardware involved."""
+"""Unit tests for rigol_mcp.server retries and screenshot responses.
+VISA access is faked; no hardware involved."""
 
 import time
 
@@ -31,6 +31,18 @@ async def test_call_returns_result():
     assert await srv._call(lambda scope: f"ok:{scope}") == "ok:FAKE_SCOPE"
 
 
+def test_large_numeric_text_is_preserved(monkeypatch, tmp_path):
+    import json
+    from pathlib import Path
+
+    monkeypatch.setenv("RIGOL_DATA_DIR", str(tmp_path))
+    payload = "1" * 10000
+    result = srv._bounded_content([srv.types.TextContent(type="text", text=payload)])
+    metadata = json.loads(result[0].text)
+    assert Path(metadata["path"]).read_text() == payload
+    assert len(result[0].text) < srv._TEXT_BUDGET
+
+
 async def test_call_retries_then_succeeds():
     calls = {"n": 0}
 
@@ -58,6 +70,64 @@ async def test_call_exhausts_attempts_then_raises():
     assert len(invalidated) == srv._MAX_ATTEMPTS  # invalidate after every failed attempt
 
 
+async def test_call_can_disable_retries():
+    calls = []
+
+    def operation(scope):
+        calls.append(scope)
+        raise _tmo()
+
+    with pytest.raises(pyvisa.errors.VisaIOError):
+        await srv._call(operation, _attempts=1)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("tool", ["run", "stop", "single", "autoscale", "check_error", "send_raw"])
+async def test_action_tools_never_replay_after_timeout(monkeypatch, tool):
+    monkeypatch.setenv("RIGOL_ENABLE_SEND_RAW", "1")
+    calls = []
+
+    def uncertain(*args, **kwargs):
+        calls.append(1)
+        raise _tmo()
+
+    target = "check_scpi_error" if tool == "check_error" else tool
+    monkeypatch.setattr(srv, target, uncertain)
+    with pytest.raises(pyvisa.errors.VisaIOError):
+        await srv.call_tool(tool, {"command": "*RST"} if tool == "send_raw" else {})
+    assert calls == [1]
+
+
+async def test_configuration_readback_failure_does_not_replay_write(monkeypatch):
+    calls = []
+
+    def setter(*args, **kwargs):
+        calls.append("write")
+
+    def reader(*args):
+        calls.append("read")
+        raise _tmo()
+
+    monkeypatch.setattr(srv, "set_timebase", setter)
+    monkeypatch.setattr(srv, "get_timebase_state", reader)
+    with pytest.raises(pyvisa.errors.VisaIOError):
+        await srv.call_tool("set_timebase", {"scale_s_div": 0.001})
+    assert calls == ["write", "read"]
+
+
+async def test_channel_setter_only_reads_its_own_channel(monkeypatch):
+    from tests.conftest import FakeScope
+
+    instrument = FakeScope(responses={
+        ":SYSTem:ERRor?": "0", ":CHAN2:DISP?": "1", ":CHAN2:SCAL?": "0.1",
+        ":CHAN2:OFFS?": "0", ":CHAN2:COUP?": "DC", ":CHAN2:PROB?": "1",
+    })
+    monkeypatch.setattr(srv, "get_scope", lambda: instrument)
+    result = await srv.call_tool("set_channel", {"channel": "CHAN2", "scale_v_div": 0.1})
+    assert '"scale_v_div": "0.1"' in result[0].text
+    assert instrument.written == [":CHAN2:SCAL 0.1"]
+
+
 async def test_call_does_not_retry_non_communication_errors():
     calls = {"n": 0}
 
@@ -71,10 +141,23 @@ async def test_call_does_not_retry_non_communication_errors():
     assert invalidated == []               # no reconnect
 
 
+async def test_framing_error_discards_stream_without_replaying():
+    calls = []
+
+    def malformed(scope):
+        calls.append(scope)
+        raise srv.BlockReadError("Truncated block")
+
+    with pytest.raises(srv.BlockReadError):
+        await srv._call(malformed)
+    assert len(calls) == 1
+    assert invalidated == [1]
+
+
 @pytest.mark.parametrize("exc_factory", [
     _tmo,
     lambda: UnicodeDecodeError("utf-8", b"", 0, 1, "boom"),
-    lambda: OSError("usb gone"),
+    lambda: OSError("connection reset"),
 ])
 async def test_call_retries_each_retryable_type(exc_factory):
     calls = {"n": 0}
@@ -104,7 +187,7 @@ async def test_call_enforces_min_interval(monkeypatch):
 
 # --------------------------------------------------------------------------- screenshot reconnect
 
-async def _run_screenshot(monkeypatch, tmp_path, *, usb, backend):
+async def _run_screenshot(monkeypatch, tmp_path, *, include_image=False):
     """Drive call_tool('screenshot') with a faked _call and capture invalidate calls."""
     monkeypatch.setenv("RIGOL_SCREENSHOT_DIR", str(tmp_path))
     png = b"\x89PNG\r\n\x1a\n" + b"fakeimage"
@@ -114,29 +197,22 @@ async def _run_screenshot(monkeypatch, tmp_path, *, usb, backend):
 
     calls = {"invalidate": 0}
     monkeypatch.setattr(srv, "_call", fake_call)
-    monkeypatch.setattr(srv, "usb_in_use", lambda: usb)
-    monkeypatch.setattr(srv, "active_backend", lambda: backend)
     monkeypatch.setattr(srv, "invalidate_scope", lambda: calls.__setitem__("invalidate", calls["invalidate"] + 1))
 
-    result = await srv.call_tool("screenshot", {})
+    result = await srv.call_tool("screenshot", {"include_image": include_image})
     return result, calls, tmp_path
 
 
-async def test_screenshot_reconnects_on_py_backend(monkeypatch, tmp_path):
-    result, calls, out = await _run_screenshot(monkeypatch, tmp_path, usb=True, backend="@py")
-    assert calls["invalidate"] == 1                      # @py: reconnect to reset USBTMC
-    assert any(getattr(b, "type", None) == "image" for b in result)
+async def test_screenshot_preserves_lan_connection(monkeypatch, tmp_path):
+    result, calls, out = await _run_screenshot(monkeypatch, tmp_path)
+    assert calls["invalidate"] == 0
+    assert not any(getattr(b, "type", None) == "image" for b in result)
     assert list(out.glob("*.png"))                       # saved to disk
 
 
-async def test_screenshot_no_reconnect_on_ivi_backend(monkeypatch, tmp_path):
-    _, calls, _ = await _run_screenshot(monkeypatch, tmp_path, usb=True, backend="@ivi")
-    assert calls["invalidate"] == 0                      # @ivi recovers on its own
-
-
-async def test_screenshot_no_reconnect_on_lan(monkeypatch, tmp_path):
-    _, calls, _ = await _run_screenshot(monkeypatch, tmp_path, usb=False, backend=None)
-    assert calls["invalidate"] == 0
+async def test_screenshot_image_is_opt_in(monkeypatch, tmp_path):
+    result, _, _ = await _run_screenshot(monkeypatch, tmp_path, include_image=True)
+    assert any(block.type == "image" for block in result)
 
 
 # --------------------------------------------------------------------------- send_raw gating

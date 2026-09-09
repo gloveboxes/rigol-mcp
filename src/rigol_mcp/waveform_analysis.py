@@ -1,5 +1,7 @@
 """Deterministic heuristics for waveform analysis."""
 
+import math
+
 # Rigol scope screens are 8 vertical divisions tall, so full-scale Vpp = scale × 8.
 SCREEN_V_DIVISIONS = 8
 # A capture whose Vpp fills less than this fraction of the vertical screen is treated as
@@ -60,6 +62,15 @@ def describe_waveform(data: dict) -> str:
     voltages = data["voltages_v"]
     times    = data["times_s"]
     n        = len(voltages)
+    if (not n or len(times) != n or any(not math.isfinite(value) or abs(value) >= 9e37 for value in voltages)
+            or any(not math.isfinite(value) for value in times)
+            or any(right <= left for left, right in zip(times, times[1:]))):
+        return (
+            f"=== Waveform: {data['channel']} ===\n"
+            "Invalid capture: empty/mismatched samples, non-finite values, invalid sentinel, or invalid timing.\n"
+            "Amplitude, frequency and shape interpretation suppressed. Acquire valid data and retry.\n"
+            + "\n".join(str(warning) for warning in data.get("warnings", []))
+        )
     vmin     = data["vmin_v"]
     vmax     = data["vmax_v"]
     vmean    = data["vmean_v"]
@@ -302,12 +313,8 @@ def describe_waveform(data: dict) -> str:
         )
 
     if abs(voltages[-1] - vmean) > edge_thr:
-        if period_est:
-            suggested = f"  To fix: set offset = N×{_fmt_si(period_est/2,'s')} − 6×scale for integer N."
-        else:
-            suggested = ""
         warnings.append(
-            f"Right edge = {_fmt_si(voltages[-1],'V')} (not at mean) — waveform ends mid-cycle.{suggested}"
+            f"Right edge = {_fmt_si(voltages[-1],'V')} (not at mean) — waveform ends mid-cycle."
         )
 
     if warnings:

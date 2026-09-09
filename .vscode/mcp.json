@@ -1,0 +1,34 @@
+{
+  "servers": {
+    "rigol": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i", "--read-only",
+        "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m",
+        "--cap-drop=ALL", "--security-opt=no-new-privileges",
+        "-e", "RIGOL_IP",
+        "--mount", "type=volume,src=rigol-mcp-data,dst=/data",
+        "rigol-mcp:local"
+      ],
+      "env": {
+        "RIGOL_IP": "192.168.1.43"
+      }
+    },
+    "rigol-apple": {
+      "type": "stdio",
+      "command": "container",
+      "args": [
+        "run", "--rm", "-i", "--read-only", "--progress", "none",
+        "--tmpfs", "/tmp",
+        "--cap-drop", "ALL",
+        "-e", "RIGOL_IP",
+        "--mount", "type=volume,source=rigol-mcp-data,target=/data",
+        "rigol-mcp:local"
+      ],
+      "env": {
+        "RIGOL_IP": "192.168.1.43"
+      }
+    }
+  }
+}

@@ -1,4 +1,4 @@
-"""Unit tests for rigol_mcp.scope — transport selection, backend-aware block reads,
+"""Unit tests for rigol_mcp.scope — TCP/IP connections, exact-length block reads,
 SCPI helpers and parsing. All VISA interaction is faked (see conftest)."""
 
 import pytest
@@ -10,20 +10,22 @@ from tests.conftest import FakeScope, FakeResourceManager, make_block
 
 # --------------------------------------------------------------------------- env / transport
 
-@pytest.mark.parametrize("value,expected", [
-    ("1", True), ("true", True), ("yes", True), ("on", True), ("anything", True),
-    ("0", False), ("false", False), ("no", False), ("off", False), ("", False),
-    ("  ", False), ("FALSE", False),
+@pytest.mark.parametrize("command", [
+    ":MEASure:ITEM? VPP,CHAN1",
+    ":STOP;:MEASure:ITEM? VPP,CHAN1",
+    ":CHAN1:SCAL?",
 ])
-def test_usb_preferred(monkeypatch, value, expected):
-    monkeypatch.setenv("RIGOL_USB", value)
-    assert sc._usb_preferred() is expected
-    assert sc.usb_in_use() is expected
+def test_send_raw_reads_parameterized_and_compound_queries(command):
+    instrument = FakeScope(responses={command: "2.0"})
+    assert sc.send_raw(instrument, command) == "2.0"
+    assert instrument.written == []
 
 
-def test_usb_preferred_unset():
-    assert sc._usb_preferred() is False
-
+def test_send_raw_ignores_question_mark_in_quoted_label():
+    command = ':CHAN1:LABel:CONTent "why;what?"'
+    instrument = FakeScope(responses={":SYSTem:ERRor?": "0"})
+    assert sc.send_raw(instrument, command) == ""
+    assert instrument.written == [command]
 
 def test_lan_resource_string(monkeypatch):
     monkeypatch.setenv("RIGOL_IP", "192.168.1.50")
@@ -35,55 +37,17 @@ def test_lan_resource_string_missing_ip_raises():
         sc.get_lan_resource_string()
 
 
-# --------------------------------------------------------------------------- USB discovery
+@pytest.mark.parametrize("ip", ["", "   "])
+def test_missing_ip_never_opens_a_session(monkeypatch, ip):
+    monkeypatch.setenv("RIGOL_IP", ip)
+    monkeypatch.setenv("RIGOL_USB", "1")
 
-def _rm(*resources):
-    return FakeResourceManager(resources=resources)
+    def unexpected_manager(*args):
+        pytest.fail("VISA must not be opened without a LAN address")
 
-
-def test_find_usb_decimal_format():
-    # pyvisa-py style: decimal VID/PID, trailing interface field
-    rm = _rm("USB0::6833::1230::DS1ZA111::0::INSTR", "ASRL1::INSTR")
-    assert sc.find_usb_resource_string(rm) == "USB0::6833::1230::DS1ZA111::0::INSTR"
-
-
-def test_find_usb_hex_format():
-    # NI-VISA style: 0x-prefixed VID/PID
-    rm = _rm("USB0::0x1AB1::0x04CE::DS1ZA222::INSTR")
-    assert sc.find_usb_resource_string(rm) == "USB0::0x1AB1::0x04CE::DS1ZA222::INSTR"
-
-
-def test_find_usb_ignores_non_rigol():
-    rm = _rm("USB0::0x0699::0x0368::TEK1::INSTR")  # Tektronix VID
-    with pytest.raises(RuntimeError, match="no Rigol USB scope"):
-        sc.find_usb_resource_string(rm)
-
-
-def test_find_usb_none_present():
-    rm = _rm("ASRL3::INSTR")
-    with pytest.raises(RuntimeError, match="no Rigol USB scope"):
-        sc.find_usb_resource_string(rm)
-
-
-def test_find_usb_multiple_without_serial_raises():
-    rm = _rm("USB0::0x1AB1::0x04CE::DS1ZA111::INSTR",
-             "USB0::0x1AB1::0x04CE::DS1ZA222::INSTR")
-    with pytest.raises(RuntimeError, match="Multiple Rigol USB scopes"):
-        sc.find_usb_resource_string(rm)
-
-
-def test_find_usb_serial_override_selects(monkeypatch):
-    monkeypatch.setenv("RIGOL_USB_SERIAL", "DS1ZA222")
-    rm = _rm("USB0::0x1AB1::0x04CE::DS1ZA111::INSTR",
-             "USB0::0x1AB1::0x04CE::DS1ZA222::INSTR")
-    assert sc.find_usb_resource_string(rm).endswith("DS1ZA222::INSTR")
-
-
-def test_find_usb_serial_override_not_found(monkeypatch):
-    monkeypatch.setenv("RIGOL_USB_SERIAL", "NOPE")
-    rm = _rm("USB0::0x1AB1::0x04CE::DS1ZA111::INSTR")
-    with pytest.raises(RuntimeError, match="RIGOL_USB_SERIAL='NOPE'"):
-        sc.find_usb_resource_string(rm)
+    monkeypatch.setattr(sc.pyvisa, "ResourceManager", unexpected_manager)
+    with pytest.raises(RuntimeError, match="RIGOL_IP"):
+        sc.get_scope()
 
 
 # --------------------------------------------------------------------------- backend selection
@@ -97,57 +61,20 @@ def _patch_rms(monkeypatch, mapping):
     monkeypatch.setattr(sc.pyvisa, "ResourceManager", factory)
 
 
-def test_open_usb_prefers_py_when_present(monkeypatch):
-    winusb_scope = FakeScope(resource_name="USB0::6833::1230::DS1ZA1::0::INSTR")
-    mapping = {
-        "@py": FakeResourceManager(("USB0::6833::1230::DS1ZA1::0::INSTR",), scope=winusb_scope),
-        "@ivi": FakeResourceManager(()),  # not consulted
-    }
-    _patch_rms(monkeypatch, mapping)
-    rm, scope = sc._open_usb_scope()
-    assert scope is winusb_scope
-    assert sc.active_backend() == "@py"
-
-
-def test_open_usb_falls_back_to_ivi(monkeypatch):
-    ivi_scope = FakeScope(resource_name="USB0::0x1AB1::0x04CE::DS1ZA1::INSTR")
-    mapping = {
-        "@py": FakeResourceManager(()),  # WinUSB sees nothing
-        "@ivi": FakeResourceManager(("USB0::0x1AB1::0x04CE::DS1ZA1::INSTR",), scope=ivi_scope),
-    }
-    _patch_rms(monkeypatch, mapping)
-    rm, scope = sc._open_usb_scope()
-    assert scope is ivi_scope
-    assert sc.active_backend() == "@ivi"
-
-
-def test_open_usb_none_found_raises_with_guidance(monkeypatch):
-    mapping = {"@py": FakeResourceManager(()), "@ivi": FakeResourceManager(())}
-    _patch_rms(monkeypatch, mapping)
-    with pytest.raises(RuntimeError) as exc:
-        sc._open_usb_scope()
-    msg = str(exc.value)
-    assert "WinUSB" in msg and "USBTMC" in msg  # actionable driver guidance
-
-
-def test_open_usb_backend_unavailable_is_skipped(monkeypatch):
-    ivi_scope = FakeScope()
-    def factory(backend=None):
-        if backend == "@py":
-            raise OSError("libusb not found")
-        return FakeResourceManager(("USB0::0x1AB1::0x04CE::DS1ZA1::INSTR",), scope=ivi_scope)
-    monkeypatch.setattr(sc.pyvisa, "ResourceManager", factory)
-    rm, scope = sc._open_usb_scope()
-    assert scope is ivi_scope
-    assert sc.active_backend() == "@ivi"
-
-
 # --------------------------------------------------------------------------- get_scope
 
-def test_get_scope_lan_configures_session(monkeypatch):
+@pytest.mark.parametrize("legacy_usb", ["0", "1"])
+def test_get_scope_lan_configures_session(monkeypatch, legacy_usb):
     monkeypatch.setenv("RIGOL_IP", "10.0.0.9")
+    monkeypatch.setenv("RIGOL_USB", legacy_usb)
     fake = FakeScope()
-    _patch_rms(monkeypatch, {"@py": FakeResourceManager(scope=fake)})
+    opened = []
+
+    def open_scope(resource):
+        opened.append(resource)
+        return fake
+
+    _patch_rms(monkeypatch, {"@py": FakeResourceManager(scope_factory=open_scope)})
     s = sc.get_scope()
     assert s is fake
     assert s.timeout == sc._LAN_TIMEOUT_MS
@@ -156,20 +83,7 @@ def test_get_scope_lan_configures_session(monkeypatch):
     assert s.cleared == 1            # initial flush attempted
     # cached on second call
     assert sc.get_scope() is fake
-
-
-def test_get_scope_usb_uses_usb_timeout(monkeypatch):
-    monkeypatch.setenv("RIGOL_USB", "1")
-    ivi_scope = FakeScope(resource_name="USB0::0x1AB1::0x04CE::DS1ZA1::INSTR")
-    mapping = {
-        "@py": FakeResourceManager(()),
-        "@ivi": FakeResourceManager(("USB0::0x1AB1::0x04CE::DS1ZA1::INSTR",), scope=ivi_scope),
-    }
-    _patch_rms(monkeypatch, mapping)
-    s = sc.get_scope()
-    assert s is ivi_scope
-    assert s.timeout == sc._USB_TIMEOUT_MS
-    assert sc.active_backend() == "@ivi"
+    assert opened == ["TCPIP0::10.0.0.9::5555::SOCKET"]
 
 
 def test_get_scope_clear_unsupported_is_tolerated(monkeypatch):
@@ -200,7 +114,7 @@ def test_connection_info_lan_unconfigured():
     """No env vars set: report LAN as the default with the unset markers visible."""
     info = sc.connection_info()
     assert info["transport"] == "LAN"
-    assert "unset" in info["RIGOL_USB"]
+    assert "RIGOL_USB" not in info
     assert "(unset)" in info["RIGOL_IP"]
     assert "RIGOL_IP not set" in info["lan_target"]
     assert info["session"] == "not yet opened"
@@ -215,16 +129,14 @@ def test_connection_info_lan_configured(monkeypatch):
     assert info["lan_target"] == "TCPIP0::192.168.1.47::5555::SOCKET"
 
 
-def test_connection_info_usb_configured(monkeypatch):
+def test_connection_info_ignores_legacy_transport_settings(monkeypatch):
     monkeypatch.setenv("RIGOL_USB", "1")
-    monkeypatch.setenv("RIGOL_IP", "192.168.1.47")  # kept but not used
+    monkeypatch.setenv("RIGOL_IP", "192.168.1.47")
     info = sc.connection_info()
-    assert info["transport"] == "USB"
-    assert info["RIGOL_USB"] == "1"
-    # RIGOL_IP is still reported even when unused — surprising values stay visible.
+    assert info["transport"] == "LAN"
+    assert "RIGOL_USB" not in info
     assert info["RIGOL_IP"] == "192.168.1.47"
-    assert "any Rigol" in info["RIGOL_USB_SERIAL"]
-    assert "lan_target" not in info  # USB mode hides LAN target
+    assert info["lan_target"] == "TCPIP0::192.168.1.47::5555::SOCKET"
 
 
 def test_connection_info_reflects_open_session(monkeypatch):
@@ -240,10 +152,8 @@ def test_connection_info_reflects_open_session(monkeypatch):
 
 def test_connection_info_never_raises_on_any_env(monkeypatch):
     """connection_info is the diagnostic of last resort — it must survive any env state."""
-    for var in ("RIGOL_USB", "RIGOL_IP", "RIGOL_USB_SERIAL"):
-        monkeypatch.delenv(var, raising=False)
+    monkeypatch.delenv("RIGOL_IP", raising=False)
     sc.connection_info()  # no env vars at all
-    monkeypatch.setenv("RIGOL_USB", "weird-value")
     monkeypatch.setenv("RIGOL_IP", "   ")
     sc.connection_info()  # garbled values too — still must not raise
 
@@ -274,65 +184,37 @@ def test_connection_info_shows_driver_when_session_open(monkeypatch):
 
 # --------------------------------------------------------------------------- block-read framing
 
-def test_parse_definite_block_header():
-    assert sc._parse_definite_block_header(b"#9000016199ABC") == (11, 16199)
-    assert sc._parse_definite_block_header(b"#800001024XY") == (10, 1024)
-
-
-def test_parse_definite_block_header_bad():
-    with pytest.raises(ValueError, match="TMC block header"):
-        sc._parse_definite_block_header(b"NOTBLOCK")
-
-
 def test_read_block_via_bytecount():
     payload = b"1.0,2.0,3.0"
     s = FakeScope(read_buffer=make_block(payload))
     assert sc._read_block_via_bytecount(s) == payload
 
 
-def test_read_block_via_message_returns_payload_and_restores_termination():
-    payload = bytes(range(256))  # contains 0x0A, would break termchar-based reads
-    seen = {}
-
-    class TermRecordingScope(FakeScope):
-        def read_raw(self, size=None):
-            seen["term_during_read"] = self.read_termination
-            return super().read_raw(size)
-
-    s = TermRecordingScope(read_buffer=make_block(payload))
-    s.read_termination = "\n"
-    assert sc._read_block_via_message(s) == payload
-    assert seen["term_during_read"] is None      # disabled during the raw read
-    assert s.read_termination == "\n"            # restored afterwards
+@pytest.mark.parametrize("ndigits", [1, 8, 9])
+def test_read_definite_block_preserves_embedded_newlines(ndigits):
+    payload = b"\x89PNG\n\x00\xff"
+    instrument = FakeScope(read_buffer=make_block(payload, ndigits=ndigits))
+    assert sc._read_definite_block(instrument) == payload
 
 
-def test_read_definite_block_dispatches_on_backend(monkeypatch):
-    payload = b"\x89PNG\n\x0a binary"
-    # @ivi -> message/read_raw path
-    monkeypatch.setattr(sc, "_usb_backend_hint", "@ivi")
-    s_ivi = FakeScope(read_buffer=make_block(payload))
-    assert sc._read_definite_block(s_ivi) == payload
-    # @py -> byte-count path
-    monkeypatch.setattr(sc, "_usb_backend_hint", "@py")
-    s_py = FakeScope(read_buffer=make_block(payload))
-    assert sc._read_definite_block(s_py) == payload
+def test_read_definite_block_rejects_bad_header():
+    with pytest.raises(ValueError, match="TMC block header"):
+        sc._read_definite_block(FakeScope(read_buffer=b"NOTBLOCK"))
+
+
+@pytest.mark.parametrize("response", [b"#15ab\n", b"#0abc\n", b"#2+3abc\n", b"#", b"#xabc\n"])
+def test_read_definite_block_rejects_incomplete_or_invalid_framing(response):
+    with pytest.raises(ValueError):
+        sc._read_definite_block(FakeScope(read_buffer=response))
 
 
 # --------------------------------------------------------------------------- screenshot / waveform
 
-def test_screenshot_png_bytecount(monkeypatch):
+def test_screenshot_png_bytecount():
     png = b"\x89PNG\r\n\x1a\n" + bytes(range(64))
-    monkeypatch.setattr(sc, "_usb_backend_hint", "@py")
     s = FakeScope(read_buffer=make_block(png))
     assert sc.screenshot_png(s) == png
     assert s.written == [":DISPlay:DATA? ON,OFF,PNG"]
-
-
-def test_screenshot_png_message(monkeypatch):
-    png = b"\x89PNG\r\n\x1a\n" + bytes(range(64))
-    monkeypatch.setattr(sc, "_usb_backend_hint", "@ivi")
-    s = FakeScope(read_buffer=make_block(png))
-    assert sc.screenshot_png(s) == png
 
 
 def test_get_waveform_parses_ds1000z_response_and_stats():
@@ -369,6 +251,20 @@ def test_get_waveform_tolerates_missing_vertical_scale():
     out = sc.get_waveform(s, "chan1")
     assert out["y_scale_v_per_div"] is None
     assert out["y_offset_v"] is None
+
+
+@pytest.mark.parametrize("increment,samples", [("nan", b"1,2"), ("-1", b"1,2"), ("0.001", b"nan,2")])
+def test_waveform_rejects_nonfinite_samples_or_timing(increment, samples):
+    instrument = FakeScope(responses={
+        ":CHAN1:DISP?": "1", ":WAV:PRE?": f"2,0,2,1,{increment},0,0,1,0,0",
+    }, read_buffer=make_block(samples))
+    with pytest.raises(ValueError, match="non-finite|timing"):
+        sc.get_waveform(instrument, "CHAN1")
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_nonfinite_measurement_is_annotated_invalid(value):
+    assert "invalid/overflow" in sc.annotate_measurement_value(value)
 
 
 # --------------------------------------------------------------------------- cursor math
@@ -559,15 +455,92 @@ def test_autoscale_raises_timeout_during_call_and_restores():
         ":AUToscale;*OPC?": "1",
         ":SYSTem:ERRor?": "0",
     })
-    s.timeout = sc._USB_TIMEOUT_MS  # the short USB default
+    s.timeout = 1000
     sc.autoscale(s)
     assert seen["timeout_during"] == sc._SLOW_OP_TIMEOUT_MS   # bumped for the slow op
-    assert s.timeout == sc._USB_TIMEOUT_MS                    # restored afterwards
+    assert s.timeout == 1000
 
 
 # --------------------------------------------------------------------------- dialect drivers
 
 _DHO_IDN = "RIGOL TECHNOLOGIES,DHO924S,DHO9A000000000,00.01.05"
+
+
+def test_dho814_capabilities_and_acrms():
+    instrument = FakeScope(responses={
+        "*IDN?": "RIGOL TECHNOLOGIES,DHO814,SN,1.0",
+        ":CHAN1:DISP?": "1", ":MEASure:ITEM? ACRMS,CHAN1": "0.5",
+    })
+    capabilities = sc.get_capabilities(instrument)
+    assert capabilities["horizontal_divisions"] == 10
+    assert capabilities["external_trigger"] is False
+    assert capabilities["command_catalog"] is True
+    assert len(capabilities["measurement_items"]) == 34
+    assert set(capabilities["evidence"]) == capabilities.keys() - {"evidence"}
+    assert capabilities["evidence"]["model"]["status"] == "hardware-verified"
+    assert capabilities["evidence"]["channels"]["status"] == "documented"
+    assert capabilities["evidence"]["measurement_items"]["status"] == "documented"
+    assert sc.measure(instrument, "CHAN1", "ACRMS") == "0.5"
+
+
+@pytest.mark.parametrize("channels,divisions", [(4, 10), (2, 12)])
+def test_capability_verification_reports_live_values_and_mismatches(channels, divisions):
+    instrument = FakeScope(responses={
+        "*IDN?": "RIGOL TECHNOLOGIES,DHO814,SN,1.0", ":SYSTem:ERRor?": "0",
+        ":SYSTem:RAMount?": str(channels), ":SYSTem:GAMount?": str(divisions),
+    })
+    result = sc.get_capabilities(instrument, verify_hardware=True)
+    assert len(result["channels"]) == channels
+    assert result["horizontal_divisions"] == divisions
+    for field in ("channels", "horizontal_divisions"):
+        assert result["evidence"][field]["status"] == "hardware-verified"
+        assert result["evidence"][field].get("mismatch", False) == (channels != 4)
+    assert result["evidence"]["external_trigger"]["status"] == "documented"
+    assert instrument.written == []
+
+
+@pytest.mark.parametrize("response,error", [("invalid", "0"), ("0", "0"), ("4", '-113,"Undefined header"')])
+def test_failed_capability_probe_is_not_hardware_verified(response, error):
+    instrument = FakeScope(responses={
+        "*IDN?": "RIGOL TECHNOLOGIES,DHO814,SN,1.0", ":SYSTem:ERRor?": error,
+        ":SYSTem:RAMount?": response, ":SYSTem:GAMount?": "10",
+    })
+    result = sc.get_capabilities(instrument, verify_hardware=True)
+    assert len(result["channels"]) == 4
+    assert result["evidence"]["channels"]["status"] == "unverified"
+    assert result["evidence"]["channels"]["fallback"] == "model definition"
+
+
+def test_unknown_dho_model_does_not_inherit_verified_capabilities():
+    instrument = FakeScope(responses={"*IDN?": "RIGOL TECHNOLOGIES,DHO9999,SN,1.0"})
+    result = sc.get_capabilities(instrument, verify_hardware=True)
+    assert result["evidence"]["model"]["status"] == "hardware-verified"
+    assert result["evidence"]["channels"]["status"] == "unverified"
+    assert result["evidence"]["external_trigger"]["status"] == "unverified"
+
+
+def test_capability_transport_error_propagates():
+    def disconnected():
+        raise OSError("connection reset")
+
+    instrument = FakeScope(responses={
+        "*IDN?": "RIGOL TECHNOLOGIES,DHO814,SN,1.0", ":SYSTem:RAMount?": disconnected,
+    })
+    with pytest.raises(OSError, match="connection reset"):
+        sc.get_capabilities(instrument, verify_hardware=True)
+
+
+def test_dho814_rejects_external_trigger_before_writes():
+    instrument = FakeScope(responses={"*IDN?": "RIGOL TECHNOLOGIES,DHO814,SN,1.0"})
+    with pytest.raises(ValueError, match="not supported by DHO814"):
+        sc.set_trigger(instrument, source="EXT")
+    assert instrument.written == []
+
+
+def test_dho812_has_two_channels_and_external_trigger():
+    capabilities = drivers.capabilities_for("RIGOL TECHNOLOGIES,DHO812,SN,1.0")
+    assert capabilities["channels"] == ["CHAN1", "CHAN2"]
+    assert capabilities["external_trigger"] is True
 
 
 def test_get_driver_detects_dho_and_caches():
@@ -595,14 +568,13 @@ def test_driver_for_recognises_families_and_rejects_unknown():
 
 def test_autoscale_dho_uses_autoset():
     s = FakeScope(responses={"*IDN?": _DHO_IDN, "*OPC?": "1", ":SYSTem:ERRor?": "0"})
-    s.timeout = sc._USB_TIMEOUT_MS
+    s.timeout = sc._LAN_TIMEOUT_MS
     sc.autoscale(s)
     assert ":AUToset" in s.written
     assert not any(c.startswith(":AUToscale") for c in s.written)
 
 
-def test_screenshot_png_dho_uses_single_param(monkeypatch):
-    monkeypatch.setattr(sc, "_usb_backend_hint", "@py")
+def test_screenshot_png_dho_uses_single_param():
     png = b"\x89PNG\r\n\x1a\n" + bytes(range(16))
     s = FakeScope(responses={"*IDN?": _DHO_IDN}, read_buffer=make_block(png))
     assert sc.screenshot_png(s) == png
@@ -610,8 +582,7 @@ def test_screenshot_png_dho_uses_single_param(monkeypatch):
     assert ":DISPlay:DATA? ON,OFF,PNG" not in s.written
 
 
-def test_screenshot_png_ds1000z_uses_three_param(monkeypatch):
-    monkeypatch.setattr(sc, "_usb_backend_hint", "@py")
+def test_screenshot_png_ds1000z_uses_three_param():
     png = b"\x89PNG\r\n\x1a\n" + bytes(range(16))
     s = FakeScope(read_buffer=make_block(png))  # DS1000Z default identity
     assert sc.screenshot_png(s) == png
@@ -645,7 +616,7 @@ def test_get_waveform_ds1000z_omits_point_range():
 
 
 def test_get_waveform_ds1000z_uses_block_reader():
-    """Regression: DS1000Z must use the backend-aware byte-count reader, not a terminator
+    """Regression: DS1000Z must use the TCP byte-count reader, not a terminator
     read. Verifies the driver dispatches to ``_read_definite_block``: the test relies on
     the fake's ``read_buffer`` path (used by read_bytes / read_raw) rather than the
     ``:WAV:DATA?`` responses dict (used by scope.query)."""
@@ -714,6 +685,29 @@ def test_set_cursor_positions_dho_uses_seconds():
     sc.set_cursor_positions(s, mode="MANUAL", ax=0.001, bx=0.002)
     assert ":CURSor:MANual:CAX 0.001" in s.written
     assert ":CURSor:MANual:CBX 0.002" in s.written
+
+
+def test_dho_manual_cursor_sources_type_and_y_readouts():
+    instrument = FakeScope(responses={
+        "*IDN?": "RIGOL TECHNOLOGIES,DHO814,SN,1.0", ":SYSTem:ERRor?": "0",
+        ":CURSor:MODE?": "MAN", ":CURSor:MANual:SOURce?": "CHAN2",
+        ":CURSor:MANual:TYPE?": "AMPL", ":CURSor:MANual:": "0.5",
+    })
+    result = sc.configure_cursors(instrument, mode="MANUAL", source="CHAN2",
+                                  cursor_type="AMPLITUDE", ay=0.1, by=0.2)
+    assert result["source"] == "CHAN2"
+    assert result["cursor_type"] == "AMPL"
+    assert result["AY_value"] == "0.5"
+    assert result["delta_y"] == "0.5"
+    assert ":CURSor:MANual:SOURce CHAN2" in instrument.written
+    assert ":CURSor:MANual:CAY 0.1" in instrument.written
+
+
+def test_cursor_invalid_mode_settings_do_not_write():
+    instrument = FakeScope(responses={"*IDN?": _DHO_IDN})
+    with pytest.raises(ValueError, match="require TRACK"):
+        sc.configure_cursors(instrument, mode="MANUAL", source_a="CHAN1")
+    assert instrument.written == []
 
 
 def test_set_cursor_positions_ds1000z_uses_pixels():

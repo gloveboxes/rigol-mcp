@@ -17,6 +17,8 @@ than holding a reference, so one instance per family is shared across all connec
 
 import pyvisa
 
+from rigol_mcp.capabilities import reviewed_facts
+
 # DS1000Z screen geometry, used for pixel-based cursor positioning. These live here
 # because the pixel addressing is itself a DS1000Z-family trait (DHO addresses cursors
 # in seconds and never touches them).
@@ -53,6 +55,8 @@ class ScopeDriver:
     """
 
     name: str = "generic"
+    horizontal_divisions: int = 12
+    extra_measure_items: frozenset[str] = frozenset()
     # Two-source (delay/phase) item names this family accepts, and aliases mapping the
     # canonical DS1000Z names onto family-specific ones (e.g. RDELAY -> RRDELAY on DHO).
     two_source_items: frozenset[str] = frozenset()
@@ -81,9 +85,8 @@ class ScopeDriver:
         """Read ``:WAV:DATA?`` and return the CSV payload as a string (header stripped).
 
         Implementations differ per family: DS1000Z wraps the ASCII payload in an IEEE
-        488.2 definite-length block (``#N<len><csv>``) which must be read with the
-        backend-aware exact-byte-count reader to avoid hanging USBTMC bulk-IN on
-        pyvisa-py/WinUSB; DHO sends bare CSV with no header and can be read to the
+        488.2 definite-length block (``#N<len><csv>``) read by exact byte count;
+        DHO sends bare CSV with no header and can be read to the
         newline terminator (safe because ASCII payloads never contain 0x0A).
         """
         raise NotImplementedError
@@ -141,11 +144,6 @@ class DS1000ZDriver(ScopeDriver):
         scope.query(":AUToscale;*OPC?")  # chain OPC? so the query blocks until complete
 
     def read_waveform_data(self, scope: pyvisa.resources.Resource) -> str:
-        # DS1000Z wraps the ASCII CSV in an IEEE 488.2 definite-length block. Use the
-        # backend-aware reader: on NI-VISA (@ivi) it reads the full message in one
-        # read_raw, on pyvisa-py (@py, used for WinUSB and LAN) it reads by exact byte
-        # count. A terminator-based read on @py + USBTMC can hang the bulk-IN endpoint
-        # for large blocks and has wedged the scope (observed on DS1054Z / WinUSB).
         from rigol_mcp.scope import _read_definite_block  # lazy: avoid drivers↔scope cycle
         scope.write(":WAV:DATA?")
         return _read_definite_block(scope).decode("ascii")
@@ -168,6 +166,8 @@ class DHODriver(ScopeDriver):
     """Rigol DHO series (12-bit)."""
 
     name = "DHO"
+    horizontal_divisions = 10
+    extra_measure_items = frozenset({"ACRMS"})
     # DHO has no plain RDELay/FDELay/RPHase/FPHase. It exposes a 4-way matrix combining
     # rising/falling edges on each source. DS1000Z names (rise-to-rise, fall-to-fall) map
     # to the homogeneous pairs; rise-to-fall and fall-to-rise are DHO-only.
@@ -194,16 +194,10 @@ class DHODriver(ScopeDriver):
         scope.query("*OPC?")
 
     def prepare_waveform(self, scope: pyvisa.resources.Resource) -> None:
-        # DHO :WAV:STOP defaults to 2, not the full screen buffer, so PRE?/DATA? return a
-        # 2-point slice unless the range is set. 1000 is the NORM max; the scope clamps.
         scope.write(":WAV:STAR 1")
         scope.write(":WAV:STOP 1000")
 
     def read_waveform_data(self, scope: pyvisa.resources.Resource) -> str:
-        # DHO returns bare CSV with no IEEE 488.2 block header, unlike DS1000Z. ASCII
-        # waveform data never contains 0x0A, so reading to the newline terminator is
-        # safe on every backend (no bulk-IN-hang risk that the byte-count reader exists
-        # to avoid for binary blocks).
         return scope.query(":WAV:DATA?").strip()
 
     def write_cursor_axis(self, scope, prefix, name, value_s):
@@ -250,3 +244,20 @@ def driver_for(idn: str) -> ScopeDriver:
         f"Unsupported instrument identity: {idn.strip()!r}. No dialect driver matched "
         f"(supported families: {supported}). Add a ScopeDriver for it in rigol_mcp/drivers.py."
     )
+
+
+def capabilities_for(identity: str) -> dict:
+    driver = driver_for(identity)
+    model = identity.split(",")[1].strip().upper()
+    channels = 2 if model in {"DHO802", "DHO812"} else 4
+    external_trigger = model in {"DHO802", "DHO812"} if driver.name == "DHO" else True
+    capabilities = {
+        "model": model,
+        "family": driver.name,
+        "channels": [f"CHAN{number}" for number in range(1, channels + 1)],
+        "external_trigger": external_trigger,
+        "horizontal_divisions": driver.horizontal_divisions,
+        "command_catalog": model == "DHO814",
+    }
+    capabilities.update({field: fact["value"] for field, fact in reviewed_facts(model).items()})
+    return capabilities

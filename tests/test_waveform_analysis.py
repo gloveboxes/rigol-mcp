@@ -68,6 +68,22 @@ def test_describe_dc_flat():
     assert "DC / flat" in text
 
 
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), 9.9e37, -9.9e37])
+def test_invalid_samples_suppress_interpretation(invalid):
+    data = _make_capture([0.0, invalid, 0.1])
+    data["warnings"] = ["capture warning"]
+    text = describe_waveform(data)
+    assert "Invalid capture" in text
+    assert "Voltage:" not in text
+    assert "capture warning" in text
+
+
+def test_nonmonotonic_time_suppresses_interpretation():
+    data = _make_capture([0.0, 0.1, 0.0])
+    data["times_s"] = [0, 0, 0]
+    assert "Invalid capture" in describe_waveform(data)
+
+
 def test_describe_square_wave_detected():
     n = 1000
     volts = [1.0 if (i // 100) % 2 == 0 else -1.0 for i in range(n)]

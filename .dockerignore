@@ -1,0 +1,10 @@
+**
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!LICENSE
+!src/
+!src/rigol_mcp/
+!src/rigol_mcp/*.py
+!src/rigol_mcp/dho814_commands.json
+!src/rigol_mcp/capabilities.json

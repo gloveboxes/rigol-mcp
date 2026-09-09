@@ -33,7 +33,7 @@ class FakeScope:
     DEFAULT_IDN = "RIGOL TECHNOLOGIES,DS1054Z,DS1ZA000000000,00.04.04.00.00"
 
     def __init__(self, responses=None, read_buffer: bytes = b"",
-                 resource_name: str = "USB0::0xFAKE::INSTR"):
+                 resource_name: str = "TCPIP0::127.0.0.1::5555::SOCKET"):
         self.responses = {"*IDN?": self.DEFAULT_IDN}
         self.responses.update(responses or {})
         self._buf = bytes(read_buffer)
@@ -109,16 +109,14 @@ class FakeResourceManager:
 @pytest.fixture(autouse=True)
 def clean_env_and_cache(monkeypatch):
     """Isolate every test: clear RIGOL_* env (incl. anything loaded from .env) and reset
-    the module-level cached connection / backend hint in rigol_mcp.scope."""
-    for var in ("RIGOL_IP", "RIGOL_USB", "RIGOL_USB_SERIAL", "RIGOL_SCREENSHOT_DIR",
+    the module-level cached connection in rigol_mcp.scope."""
+    for var in ("RIGOL_IP", "RIGOL_SCREENSHOT_DIR",
                 "RIGOL_ENABLE_SEND_RAW"):
         monkeypatch.delenv(var, raising=False)
     scope_mod._rm = None
     scope_mod._scope = None
-    scope_mod._usb_backend_hint = None
     scope_mod._driver = None
     yield
     scope_mod._rm = None
     scope_mod._scope = None
-    scope_mod._usb_backend_hint = None
     scope_mod._driver = None

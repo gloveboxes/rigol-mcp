@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "dataset_version": "dho800900-v1",
+  "review": {
+    "status": "reviewed",
+    "date": "2026-09-09",
+    "method": "Manually checked against the cited programming-guide sections; not vendor certification or exhaustive hardware validation"
+  },
+  "source": {
+    "title": "DHO800/DHO900 Programming Guide",
+    "publication": "PGA39106-1110",
+    "software_version": "00.01.03",
+    "url": "https://cdn-aorpci9.actonsoftware.com/acton/cdna/1579/f-f798be30-18ec-4846-9ffe-40b125f49133/1/5/DHO800900_ProgrammingGuide_EN.pdf",
+    "sha256": "e252bc1cd14f7d543e6955832a07679e7005f178fcbb3a9fb0213ac20ce22f8d",
+    "page_numbering": "Printed manual pages, not PDF viewer pages"
+  },
+  "citations": {
+    "models": {"section": "1", "pages": [1, 2]},
+    "external_trigger": {"section": "3.27.8.1", "pages": [305]},
+    "horizontal_divisions": {"section": "3.24.12", "pages": [273]},
+    "measurement_items": {"section": "3.17.2", "pages": [195, 196]},
+    "two_source_items": {"section": "3.17.2", "pages": [195, 196]}
+  },
+  "shared": {
+    "family": {"value": "DHO", "citation": "models"},
+    "horizontal_divisions": {"value": 10, "citation": "horizontal_divisions"},
+    "measurement_items": {
+      "citation": "measurement_items",
+      "value": [
+        "VMAX", "VMIN", "VPP", "VTOP", "VBASE", "VAMP", "VAVG", "VRMS",
+        "OVERSHOOT", "PRESHOOT", "MAREA", "MPAREA", "PERIOD", "FREQUENCY",
+        "RTIME", "FTIME", "PWIDTH", "NWIDTH", "PDUTY", "NDUTY", "TVMAX", "TVMIN",
+        "PSLEWRATE", "NSLEWRATE", "VUPPER", "VMID", "VLOWER", "VARIANCE", "PVRMS",
+        "PPULSES", "NPULSES", "PEDGES", "NEDGES", "ACRMS"
+      ]
+    },
+    "two_source_items": {
+      "citation": "two_source_items",
+      "value": ["RRDELAY", "RFDELAY", "FRDELAY", "FFDELAY", "RRPHASE", "RFPHASE", "FRPHASE", "FFPHASE"]
+    }
+  },
+  "models": {
+    "DHO802": {
+      "channels": {"value": ["CHAN1", "CHAN2"], "citation": "models"},
+      "external_trigger": {"value": true, "citation": "external_trigger"}
+    },
+    "DHO804": {
+      "channels": {"value": ["CHAN1", "CHAN2", "CHAN3", "CHAN4"], "citation": "models"},
+      "external_trigger": {"value": false, "citation": "external_trigger"}
+    },
+    "DHO812": {
+      "channels": {"value": ["CHAN1", "CHAN2"], "citation": "models"},
+      "external_trigger": {"value": true, "citation": "external_trigger"}
+    },
+    "DHO814": {
+      "channels": {"value": ["CHAN1", "CHAN2", "CHAN3", "CHAN4"], "citation": "models"},
+      "external_trigger": {"value": false, "citation": "external_trigger"}
+    },
+    "DHO914": {
+      "channels": {"value": ["CHAN1", "CHAN2", "CHAN3", "CHAN4"], "citation": "models"},
+      "external_trigger": {"value": false, "citation": "external_trigger"}
+    },
+    "DHO914S": {
+      "channels": {"value": ["CHAN1", "CHAN2", "CHAN3", "CHAN4"], "citation": "models"},
+      "external_trigger": {"value": false, "citation": "external_trigger"}
+    },
+    "DHO924": {
+      "channels": {"value": ["CHAN1", "CHAN2", "CHAN3", "CHAN4"], "citation": "models"},
+      "external_trigger": {"value": false, "citation": "external_trigger"}
+    },
+    "DHO924S": {
+      "channels": {"value": ["CHAN1", "CHAN2", "CHAN3", "CHAN4"], "citation": "models"},
+      "external_trigger": {"value": false, "citation": "external_trigger"}
+    }
+  }
+}
