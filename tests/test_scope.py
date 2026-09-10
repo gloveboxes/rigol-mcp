@@ -394,6 +394,24 @@ def test_get_waveform_enabled_channel_no_warnings():
     assert out["warnings"] == []
 
 
+def test_get_waveform_supports_displayed_dho_math_source(monkeypatch):
+    instrument = FakeScope(responses={
+        "*IDN?": "RIGOL TECHNOLOGIES,DHO814,DHO8A000000000,00.01.05",
+        ":MATH1:DISPlay?": "1",
+        ":WAV:PRE?": "0,0,4,1,1e-6,0,0,0,0,0",
+        ":WAV:DATA?": "0,1,0,-1",
+        ":MATH1:SCAL?": "1",
+        ":MATH1:OFFS?": "0",
+        ":ACQuire:SRATe?": "1.25e9",
+    })
+    monkeypatch.setattr(sc, "_driver", None)
+    result = sc.get_waveform(instrument, "MATH1")
+    assert result["channel"] == "MATH1"
+    assert result["acquisition_sample_rate_hz"] == 1.25e9
+    assert result["displayed_sample_rate_hz"] == 1e6
+    assert result["analysis_nyquist_hz"] == 500_000
+
+
 def test_get_waveform_flags_sentinel_samples():
     pre = "0,0,3,1,1.000000e-06,0,0,1,0,0"
     s = FakeScope(
@@ -418,6 +436,44 @@ def test_get_waveform_empty_payload_raises_clear_error(monkeypatch):
     with pytest.raises(RuntimeError, match="no waveform data") as exc:
         sc.get_waveform(s, "CHAN2")
     assert "auto-enabled" in str(exc.value)  # the auto-enable context is carried along
+
+
+def test_get_waveform_empty_payload_drains_and_reports_scope_error(monkeypatch):
+    monkeypatch.setattr(sc.time, "sleep", lambda _: None)
+    monkeypatch.setattr(sc, "_WAVEFORM_DATA_RETRY_S", 0.0)
+    errors = ['-200,"Command execute failed"']
+    pre = "0,0,0,1,1.000000e-06,0,0,1,0,0"
+    instrument = FakeScope(
+        responses={
+            ":CHAN1:DISP?": "1",
+            ":SYSTem:ERRor?": lambda: errors.pop(0) if errors else '0,"No error"',
+            ":WAV:PRE?": pre,
+        },
+        read_buffer=make_block(b""),
+    )
+
+    with pytest.raises(RuntimeError, match='Scope error: -200,"Command execute failed"'):
+        sc.get_waveform(instrument, "CHAN1")
+
+    assert sc.check_scpi_error(instrument) is None
+
+
+def test_get_waveform_empty_payload_reports_active_dho_decoder(monkeypatch):
+    monkeypatch.setattr(sc.time, "sleep", lambda _: None)
+    monkeypatch.setattr(sc, "_WAVEFORM_DATA_RETRY_S", 0.0)
+    errors = ['-200,"Command execute failed"']
+    instrument = FakeScope(responses={
+        "*IDN?": "RIGOL TECHNOLOGIES,DHO814,SN,00.01.05",
+        ":CHAN1:DISP?": "1", ":WAV:PRE?": "0,0,0,1,1e-6,0,0,1,0,0",
+        ":WAV:DATA?": "", ":SYSTem:ERRor?": lambda: errors.pop(0) if errors else "0",
+        ":BUS1:DISPlay?": "1", ":BUS2:DISPlay?": "0",
+        ":BUS3:DISPlay?": "0", ":BUS4:DISPlay?": "0",
+    })
+
+    with pytest.raises(RuntimeError, match="decoder overlays BUS1") as exc:
+        sc.get_waveform(instrument, "CHAN1")
+
+    assert "download_waveform with RAW mode" in str(exc.value)
 
 
 def test_get_waveform_refreshes_zero_increment_preamble():
@@ -602,6 +658,24 @@ def test_get_waveform_dho_sets_point_range():
     sc.get_waveform(s, "CHAN1")
     assert ":WAV:STAR 1" in s.written
     assert ":WAV:STOP 1000" in s.written
+
+
+def test_get_waveform_dho_math_omits_unsupported_point_range():
+    pre = "0,0,2,1,1.000000e-06,0,0,1,0,0"
+    s = FakeScope(responses={
+        "*IDN?": _DHO_IDN,
+        ":WAV:PRE?": pre,
+        ":WAV:DATA?": "3.2,3.3",
+        ":MATH1:DISPlay?": "1",
+        ":MATH1:SCAL?": "1.0",
+        ":MATH1:OFFS?": "0",
+    })
+
+    out = sc.get_waveform(s, "MATH1")
+
+    assert out["voltages_v"] == [3.2, 3.3]
+    assert not any(command.startswith(":WAV:STAR") for command in s.written)
+    assert not any(command.startswith(":WAV:STOP") for command in s.written)
 
 
 def test_get_waveform_ds1000z_omits_point_range():

@@ -1,0 +1,19 @@
+{
+  "gpio": 16,
+  "secondary_gpio": 18,
+  "system_clock_hz": 150000000,
+  "cases": [
+    {"id": "duty_1mhz_10pct", "group": "duty", "frequency_hz": 1000000, "duty_percent": 10.0},
+    {"id": "duty_1mhz_25pct", "group": "duty", "frequency_hz": 1000000, "duty_percent": 25.0},
+    {"id": "duty_1mhz_50pct", "group": "duty", "frequency_hz": 1000000, "duty_percent": 50.0},
+    {"id": "duty_1mhz_75pct", "group": "duty", "frequency_hz": 1000000, "duty_percent": 75.0},
+    {"id": "duty_1mhz_90pct", "group": "duty", "frequency_hz": 1000000, "duty_percent": 90.0},
+    {"id": "narrow_10khz_0_1pct", "group": "narrow", "frequency_hz": 10000, "duty_percent": 0.1},
+    {"id": "narrow_1mhz_1pct", "group": "narrow", "frequency_hz": 1000000, "duty_percent": 1.0},
+    {"id": "boundary_2288hz", "group": "boundary", "frequency_hz": 2288, "duty_percent": 50.0},
+    {"id": "boundary_2289hz", "group": "boundary", "frequency_hz": 2289, "duty_percent": 50.0},
+    {"id": "phase_1mhz_0deg", "group": "phase", "frequency_hz": 1000000, "duty_percent": 50.0, "phase_degrees": 0.0},
+    {"id": "phase_1mhz_90deg", "group": "phase", "frequency_hz": 1000000, "duty_percent": 50.0, "phase_degrees": 90.0},
+    {"id": "phase_1mhz_180deg", "group": "phase", "frequency_hz": 1000000, "duty_percent": 50.0, "phase_degrees": 180.0}
+  ]
+}

@@ -52,10 +52,15 @@ def parameters_for(block):
         if kind == "bool":
             parameter["enum"] = ["ON", "OFF", "1", "0"]
         elif choices:
-            parameter["enum"] = [
-                value.strip() for value in choices[1].split("|")
-                if not re.fullmatch(r"D\d+|EXT|LIN", value.strip(), re.IGNORECASE)
-            ]
+            values = []
+            for value in choices[1].split("|"):
+                value = value.strip()
+                tokens = value.split()
+                if len(tokens) > 1 and len({token.casefold() for token in tokens}) == 1:
+                    value = tokens[0]
+                if not re.fullmatch(r"D\d+|EXT|LIN", value, re.IGNORECASE):
+                    values.append(value)
+            parameter["enum"] = values
         parameters[name] = parameter
     return parameters
 

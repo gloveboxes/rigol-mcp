@@ -1,11 +1,12 @@
 ---
 name: rigol-scope
-description: "Use when controlling or testing a Rigol oscilloscope through MCP: connect to the DHO814 over LAN, inspect capabilities or settings, configure acquisition and triggers, measure signals, use cursors, download waveforms, capture screenshots, or discover SCPI commands. Prefer the registered rigol MCP tools over direct sockets or ad hoc scripts."
+description: "Use when controlling or testing a Rigol oscilloscope through MCP: connect to the DHO814 over LAN, inspect capabilities or settings, configure acquisition, decode and triggers, measure or analyze signals, run mask/search/recording workflows, preserve setup state, download waveforms, capture screenshots, or discover SCPI commands. Prefer the registered rigol MCP tools over direct sockets or ad hoc scripts."
 ---
 
 # Rigol Scope
 
-Use the selected workspace MCP server: `rigol` (Docker) or `rigol-apple` (Apple
+Use the selected workspace MCP server: `rigol-docker` (Docker) or
+`rigol-apple-container` (Apple
 Container). Never use both against one scope. It speaks MCP over stdio and connects to
 the instrument over LAN/TCP port 5555. The main target is DHO814 (DHO800 series);
 the reference covers DHO800/DHO900, not DHO8000/DHO9000. Do not infer support for
@@ -22,7 +23,7 @@ other models from a family name alone.
    Edit that value for a different scope; the image contains no scope address.
   The container runtime must reach the scope's TCP port 5555.
 3. If tools are unavailable, have the user run **MCP: List Servers**, select
-  **rigol** or **rigol-apple**, and start/restart it, accepting any trust prompt themselves. Ensure
+  **rigol-docker** or **rigol-apple-container**, and start/restart it, accepting any trust prompt themselves. Ensure
    the server's tools are enabled in chat. A skill cannot grant tool access.
 4. Discover the available tools. Names below are the server's logical tool names;
    use the actual names exposed by the MCP client, which may include a namespace.
@@ -37,15 +38,25 @@ stdio, or assume an HTTP endpoint exists.
 
 ## Choose the Tool
 
-- For numeric readings, use `measure` or `measure_between` with items returned by
-  `get_capabilities`. Inspect existing settings before changing them.
-- For trace interpretation, use `get_waveform` with its default local analysis.
-  For stable captures, stop acquisition or wait for a single acquisition to
-  finish. `single` arms acquisition; it does not wait for completion.
+- For one numeric reading, use `measure` or `measure_between` with items returned
+  by `get_capabilities`. Use `measure_statistics` for structured current, average,
+  extrema, deviation and count values. Inspect existing settings before changing them.
+- For a quick trace interpretation, use `get_waveform` or `analyze_waveform`. For
+  a new stable acquisition, prefer `acquire_and_capture`: it arms, waits with a
+  bounded timeout, and saves aligned traces. Use `capture_waveforms` only when the
+  acquisition is already stopped. `single` merely arms and does not wait.
 - For large/full-memory captures on DHO814, use `download_waveform` after stopping
   acquisition. It saves CSV and returns a path plus timing metadata.
 - For common changes use `set_channel`, `set_timebase`, `set_trigger`, or
-  `set_cursors`. Discover their schemas rather than guessing parameter names.
+  `set_cursors`. `set_trigger` includes analog and RS-232/I2C/SPI/CAN triggers.
+  Use `configure_timing_capture` for coordinated channels, timebase, acquisition,
+  and trigger settings. Discover schemas rather than guessing parameter names.
+- Prefer `configure_decode`, mask, search, and recording/replay tools for those
+  multi-command workflows. Supply decoder `settings.thresholds_v` for the connected
+  logic levels. Search results are paginated; inspect `next_offset`.
+- Before temporary broad reconfiguration, use `save_scope_setup`. Restore with
+  `restore_scope_setup`, using its exact single-use confirmation flow. Do not read
+  and resend the binary setup through model context.
 - For other DHO814 operations, search `scpi_catalog` by subsystem or command,
   then pass `command` to retrieve one entry's parameters and manual section.
   Invoke `scpi_execute` with a header, an explicit `operation`, and positional
@@ -86,8 +97,8 @@ Use `read_capture` for a specific bounded excerpt, not to page through entire
 files. Raw waveform JSON, binary responses and large results are file-backed.
 Container paths live under `/data` in that runtime's persistent `rigol-mcp-data`
 volume; Docker and Apple volumes are separate and are not host paths.
-A saved setup can be restored using `data_path`
-without reading and resending its bytes, but only with authorization to restore it.
+Saved setup paths are container paths. Pass one directly to `restore_scope_setup`
+without reading and resending its bytes, and only with authorization to replace state.
 
 ## Instrument Safety
 
@@ -105,6 +116,9 @@ without reading and resending its bytes, but only with authorization to restore 
   9.9E37 is an invalid/overflow sentinel, not a measurement.
 - Measurements may auto-enable disabled channels; DHO measurement items may need
   live acquisition. Account for these side effects before using them in a test.
+- `acquire_and_capture` stops acquisition on timeout. Recording/replay navigation,
+  setup restoration, acquisition actions, and semantic configuration writes are
+  not automatically replayed after communication failure.
 - After a communication failure, a state-changing command may already have run.
   Inspect state before retrying; do not blindly replay resets or other actions.
   Use `check_error` deliberately: it drains the queue and reports the first error.

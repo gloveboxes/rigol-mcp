@@ -436,6 +436,21 @@ def ensure_channel_displayed(scope: pyvisa.resources.Resource, channel: str) -> 
     )
 
 
+def ensure_waveform_source_displayed(scope: pyvisa.resources.Resource, source: str) -> str | None:
+    source = source.upper()
+    if source.startswith("CHAN"):
+        return ensure_channel_displayed(scope, source)
+    if not source.startswith("MATH") or get_driver(scope).name != "DHO":
+        raise ValueError("Waveform source must be CHAN1-CHAN4, or MATH1-MATH4 on DHO")
+    if scope.query(f":{source}:DISPlay?").strip().upper() in {"1", "ON"}:
+        return None
+    scope.write(f":{source}:DISPlay ON")
+    if err := check_scpi_error(scope):
+        raise RuntimeError(f"SCPI error enabling {source} display: {err}")
+    time.sleep(0.5)
+    return f"{source} display was OFF — auto-enabled it; acquire a fresh trace before interpreting it."
+
+
 def annotate_measurement_value(value: str) -> str:
     """Append an explanation when the scope returned its invalid/overflow sentinel."""
     try:
@@ -616,12 +631,12 @@ def get_waveform(scope: pyvisa.resources.Resource, channel: str) -> dict:
     """
     ch = channel.upper()
     warnings = []
-    if note := ensure_channel_displayed(scope, ch):
+    if note := ensure_waveform_source_displayed(scope, ch):
         warnings.append(note)
     scope.write(f":WAV:SOUR {ch}")
     scope.write(":WAV:MODE NORM")
     scope.write(":WAV:FORM ASC")
-    get_driver(scope).prepare_waveform(scope)
+    get_driver(scope).prepare_waveform(scope, ch)
 
     pre_str = scope.query(":WAV:PRE?").strip()
     pre = pre_str.split(",")
@@ -642,10 +657,28 @@ def get_waveform(scope: pyvisa.resources.Resource, channel: str) -> dict:
         data_str = get_driver(scope).read_waveform_data(scope)
         voltages = [float(v) for v in data_str.split(",") if v.strip()]
     if not voltages:
-        reason = (
-            f"{ch} returned no waveform data — the channel has not acquired anything yet. "
-            "Ensure acquisition is running (run tool, or single/autoscale) and re-capture."
-        )
+        scpi_error = check_scpi_error(scope)
+        active_decoders = []
+        if get_driver(scope).name == "DHO":
+            for bus in range(1, 5):
+                try:
+                    if scope.query(f":BUS{bus}:DISPlay?").strip() in {"1", "ON"}:
+                        active_decoders.append(f"BUS{bus}")
+                except Exception:
+                    pass
+        if active_decoders:
+            reason = (
+                f"{ch} returned no NORM waveform data while decoder overlays "
+                f"{', '.join(active_decoders)} are displayed. Disable those decoder displays "
+                "and re-capture, or use download_waveform with RAW mode."
+            )
+        else:
+            reason = (
+                f"{ch} returned no waveform data — the channel has not acquired anything yet. "
+                "Ensure acquisition is running (run tool, or single/autoscale) and re-capture."
+            )
+        if scpi_error:
+            reason += f" Scope error: {scpi_error}."
         if warnings:
             reason += f" Note: {warnings[0]}"
         raise RuntimeError(reason)
@@ -674,6 +707,10 @@ def get_waveform(scope: pyvisa.resources.Resource, channel: str) -> dict:
         y_offset = float(scope.query(f":{ch}:OFFS?"))
     except Exception:
         y_offset = None
+    try:
+        acquisition_sample_rate = float(scope.query(":ACQuire:SRATe?"))
+    except Exception:
+        acquisition_sample_rate = None
 
     if any(abs(v) >= _INVALID_SENTINEL for v in voltages):
         warnings.append(
@@ -682,10 +719,21 @@ def get_waveform(scope: pyvisa.resources.Resource, channel: str) -> dict:
             "after the channel has acquired data."
         )
 
+    displayed_sample_rate = 1 / x_inc
+    effective_sample_rate = min(
+        rate for rate in (acquisition_sample_rate, displayed_sample_rate)
+        if rate is not None and rate > 0
+    )
     return {
         "channel":        ch,
         "points":         n,
         "time_increment_s": x_inc,
+        "acquisition_sample_rate_hz": acquisition_sample_rate,
+        "displayed_sample_rate_hz": displayed_sample_rate,
+        "displayed_points_interpolated": bool(
+            acquisition_sample_rate and displayed_sample_rate > acquisition_sample_rate
+        ),
+        "analysis_nyquist_hz": effective_sample_rate / 2,
         "time_start_s":   times[0] if times else 0.0,
         "time_end_s":     times[-1] if times else 0.0,
         "vmin_v":         min(voltages),

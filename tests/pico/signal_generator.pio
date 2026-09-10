@@ -1,0 +1,12 @@
+.program signal_generator
+
+.wrap_target
+    mov x, isr
+    set pins, 1
+high:
+    jmp x-- high
+    mov y, osr
+    set pins, 0
+low:
+    jmp y-- low
+.wrap

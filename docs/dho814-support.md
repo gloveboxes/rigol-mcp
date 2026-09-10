@@ -117,6 +117,81 @@ commands and error-queue reads likewise do not automatically retry. A failed
 readback does not imply the preceding write failed; inspect state before deciding
 whether to repeat it. Pure configuration reads retain communication retries.
 
+### Generic timing capture
+
+`configure_timing_capture` configures one or more analog channels, acquisition and
+trigger as one validated operation. Signal labels, purpose and expected behavior
+remain caller-supplied metadata, so the same API applies to buses, clocks, control
+lines and unrelated mixed-voltage systems. When frequency is known, `cycles_visible`
+selects the horizontal scale unless `time_scale_s_div` is supplied explicitly.
+Because DHO814 can ignore horizontal-scale writes while stopped, the operation
+briefly runs a stopped acquisition while applying settings and returns it to STOP.
+The response reports requested/readback mismatches and unverified settings instead
+of treating any partial change as complete success.
+
+Call `stop` before `capture_waveforms`. The latter rejects a running acquisition,
+then transfers each requested channel from that stopped record, stores all raw
+arrays in one JSON file and returns compact analyses. This provides aligned evidence
+without claiming protocol decoding or interpreting project-specific signal names.
+
+The DHO814 analog bandwidth and sample rate are useful for many digital timing
+checks but do not replace a logic analyzer for long digital captures or protocol
+history. Probe attenuation, loading, grounding and voltage limits remain physical
+setup responsibilities outside the MCP server.
+
+### Acquisition and analysis workflows
+
+`acquire_and_capture` performs a complete single-shot transaction under one
+instrument lock: arm, poll trigger status with a bounded timeout, stop on timeout,
+then save and analyze selected screen traces. It is not replayed after communication
+failure. `measure_statistics` returns requested current, average, extrema, deviation,
+and count values with explicit validity for Rigol overflow sentinels.
+
+Screen waveform tools accept displayed DHO `MATH1` through `MATH4` traces as well
+as analog channels. Their metadata reports hardware acquisition sample rate,
+displayed-point rate, whether displayed points are interpolated, and an analysis
+Nyquist frequency capped by the hardware acquisition rate.
+`configure_math` supports filter type and cutoff settings and warns when readback
+shows that acquisition constraints clamped a requested cutoff.
+
+`configure_timing_capture` disables the delayed/zoom timebase so measurements and
+screen waveform transfers refer to the configured main timebase. DHO814 NORM
+waveform transfer can return no data while a serial decoder overlay is displayed;
+the waveform tools report the active bus and recommend disabling its display or
+using a RAW download.
+
+`analyze_pwm_envelope` operates on one or two aligned, stopped analog traces. It
+extracts carrier frequency and period stability, duty range, reconstructed average
+voltage, modulation frequency, and two-channel envelope phase. It uses robust settled
+rail levels so edge overshoot is reported separately rather than distorting digital
+swing or reconstructed voltage, and reports sample counts with a confidence level.
+The reconstructed voltage is analytical only: the physical pin remains PWM without a low-pass filter.
+General waveform analysis labels detected duty modulation and suppresses edge/period
+jitter metrics whose assumptions do not hold for intentionally variable pulse widths.
+
+`configure_mask_test` and `get_mask_results` cover pass/fail testing without hiding
+counter state. `configure_search` supports edge and pulse searches;
+`get_search_results` returns bounded pages of event times. Serial decoding includes
+parallel, RS-232, I2C, SPI, and CAN. The existing trigger tool supports those protocol
+trigger families alongside analog trigger types.
+
+Decoder `settings.thresholds_v` maps the protocol signal name (`TX`, `RX`, `SCL`,
+`SDA`, `CLK`, `MISO`, `MOSI`, `CS`, `PAL`, `PALCLK`, or `CAN`) to its threshold in
+volts. Set thresholds explicitly when logic levels differ from the scope defaults.
+Mask creation requires competing math and decoder analysis displays to be disabled;
+requested-versus-applied results expose ignored enables, clamped tolerances, or a
+RUN operation that has already returned to STOP.
+
+`configure_recording`, `get_recording_state`, and `control_recording_replay` cover
+frame recording, progress, selection, navigation, and replay. Navigation actions are
+non-idempotent and never retried. Use `save_scope_setup` to preserve complete state
+before temporary workflows. `restore_scope_setup` accepts only server-generated files,
+requires exact single-use confirmation, and can replace broad instrument state. New
+snapshots save represented channel/timebase/trigger state beside the binary setup;
+restore compares readback with that snapshot and reports mismatches. If readback fails
+after the write, the result explicitly says the write succeeded but verification is
+uncertain, so callers do not blindly repeat the destructive operation.
+
 ## Transfers
 
 `download_waveform` writes time/value CSV files under `RIGOL_DATA_DIR` (default
@@ -179,6 +254,15 @@ shape interpretation suppressed. Channel/timebase/trigger configuration matched
 the initial snapshot exactly afterward, acquisition returned to AUTO, waveform
 transfer settings were restored, and the final error queue was clear.
 
+On 2026-09-10, the same DHO814 passed a Pico 2 W-driven advanced acceptance run.
+Live coverage included measurement statistics, cursors, search pagination, mask
+creation and counters, recording/replay, meters, math/reference traces, aligned and
+RAW transfers, setup restoration, and UART, I2C, and SPI decoding. The run exposed
+and verified fixes for decoder block reads and thresholds, semantic readback
+mismatches, delayed/zoom state, replay state, protocol-trigger catalog enums, and
+decoder-overlay waveform diagnostics. Results and explicit exclusions are recorded
+in the [advanced acceptance report](../captures/dho814_advanced_mcp_acceptance_report.json).
+
 Repeat this opt-in test only on an idle, unconnected scope. It temporarily changes
 settings and acquisition state, restores them in a `finally` block, and writes
 `captures/live_scope_report.json`. Do not interrupt it during restoration.
@@ -187,10 +271,10 @@ Use the [container-based live smoke test](development.md#live-smoke-test).
 It requires no host Python installation. Stop the registered MCP server before
 running it, and restart that server only after the test exits.
 
-Signal accuracy, every catalog command, full-depth transfers and TCP/IP fault
-recovery still require separate hardware acceptance tests. Setup import, resets,
-autoset, networking changes, and scope-side file overwrites are deliberately not
-part of this smoke test.
+CAN and parallel decoding, every catalog command, destructive operations, and
+TCP/IP fault recovery still require separate hardware acceptance tests. Resets,
+autoset, networking changes, self-test, and scope-side file overwrites are
+deliberately excluded from routine acceptance testing.
 
 ### Reference Review
 

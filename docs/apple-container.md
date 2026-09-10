@@ -37,8 +37,8 @@ The workspace [MCP configuration](../.vscode/mcp.json) contains alternatives:
 
 | Server | Runtime |
 | --- | --- |
-| `rigol` | Docker |
-| `rigol-apple` | Apple Container |
+| `rigol-docker` | Docker |
+| `rigol-apple-container` | Apple Container |
 
 Use **MCP: List Servers** to stop/disable the unwanted server and start/enable
 the selected one. **Do not use both against the same scope.** VS Code keeps its
@@ -76,6 +76,6 @@ VPN and network policies may affect that access. The container runs Linux in
 Apple's virtualization environment, not directly as a macOS process.
 
 Validated locally: Dockerfile build, non-root capture writes, MCP initialization,
-21-tool discovery, and catalog queries using the exact VS Code launch arguments.
+44-tool discovery, and catalog queries using the exact VS Code launch arguments.
 No physical scope calls were made during Apple-runtime validation. Docker-based
 development and CI workflows remain documented in [development checks](development.md).

@@ -50,6 +50,11 @@ def test_repeated_pdf_table_header_is_not_an_enum_value():
     assert parameters_for(block)["item"]["enum"] == ["RFDelay", "FRDelay", "FFDelay"]
 
 
+def test_repeated_pdf_enum_token_is_collapsed():
+    block = "\nParameter\n<source> Discrete {CHANnel1 CHANnel1|CHANnel2} -\nRemarks\n"
+    assert parameters_for(block)["source"]["enum"] == ["CHANnel1", "CHANnel2"]
+
+
 @pytest.mark.parametrize("model", ["DHO802", "DHO804", "DHO812", "DHO814", "DHO914", "DHO914S", "DHO924", "DHO924S"])
 def test_model_table_and_external_trigger_restriction(model):
     facts = capabilities.reviewed_facts(model)

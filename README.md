@@ -129,7 +129,7 @@ Configure your client to launch the Docker container over stdio:
 The surrounding configuration format depends on the client; this is a process
 configuration example, not a universal MCP configuration file. VS Code users can
 use the included [.vscode/mcp.json](.vscode/mcp.json), editing `env.RIGOL_IP` for
-their scope. Select **rigol** for Docker or **rigol-apple** for Apple Container,
+their scope. Select **rigol-docker** for Docker or **rigol-apple-container** for Apple Container,
 and disable the other entry; do not run both against one scope. See
 [Docker MCP client configuration](docs/docker.md#mcp-client-configuration) or
 [Apple Container setup](docs/apple-container.md) for prerequisites.
@@ -162,6 +162,71 @@ Example request to an agent:
 > Identify the scope, check its capabilities and current settings, then measure
 > frequency and peak-to-peak voltage on channel 1.
 
+## Semantic Workflows
+
+Common DHO814 operations have validated semantic tools for acquisition, measurement
+statistics, meter, serial/CAN decode, protocol triggers, math, reference, mask testing,
+waveform search, and frame recording/replay. `analyze_waveform` returns compact
+statistics, frequency and FFT results while retaining raw data in a capture file.
+Its rate metadata distinguishes the hardware acquisition rate from the displayed
+point rate, identifies interpolated display points, and caps the analysis Nyquist
+limit at the lower of those rates. DHO math traces (`MATH1` through `MATH4`) are
+accepted by the screen waveform and aligned capture tools.
+
+Decoder configuration accepts protocol-specific voltage thresholds through
+`settings.thresholds_v`, for example `{"TX": 1.65}` or
+`{"SCL": 1.65, "SDA": 1.65}`. DHO814 NORM waveform transfer can return no data
+while a decoder overlay is displayed; disable that bus display or use a RAW download.
+
+`configure_math` supports FFT and filter settings. Filter cutoff readback is
+compared with the requested value and reports a warning when acquisition limits
+force the scope to clamp it. `analyze_pwm_envelope` extracts PWM carrier stability,
+duty and reconstructed average-voltage envelopes, modulation frequency, and phase
+between two aligned channels. Settled rail estimates exclude edge overshoot from
+the reconstructed voltage, while generic analysis reports robust swing, overshoot,
+and undershoot separately. PWM results include edge, period, and envelope sample
+counts with a confidence level. Reconstruction does not turn an unfiltered PWM pin
+into an analog output.
+
+`acquire_and_capture` arms a single acquisition, waits for completion with a bounded
+timeout, and saves aligned channel traces. It stops acquisition on timeout. For an
+already stopped record, use `capture_waveforms`. Search event results are paginated;
+mask counters and measurement statistics return structured numeric validity.
+
+Use `save_scope_setup` before temporary reconfiguration. `restore_scope_setup` only
+accepts generated files, requires a single-use confirmation, and is not retried.
+New snapshots include a represented-state sidecar; restoration reads the scope
+back and reports any channel, timebase, or trigger mismatch.
+Recording and replay controls are also not retried after uncertain outcomes.
+
+For timing work, use `configure_timing_capture` with caller-defined signal labels,
+voltage domains and trigger criteria. It can derive a useful time scale from signal
+frequency and cycles visible; it has no protocol- or project-specific assumptions.
+On a stopped DHO it briefly runs acquisition while applying horizontal scale, then
+returns to STOP. It also disables a retained delayed/zoom timebase so measurements
+and captures use the requested main view. Its result includes `fully_applied`,
+`mismatches`, and fields whose scope readback cannot verify directly.
+After stopping acquisition, `capture_waveforms` reads several channels from the same
+stopped acquisition, saves the raw arrays together and returns compact per-channel
+analysis. For example:
+
+```json
+{
+  "channels": [
+    {"channel": 1, "label": "CLOCK", "voltage_domain_v": 3.3},
+    {"channel": 2, "label": "DATA", "voltage_domain_v": 5.0}
+  ],
+  "trigger": {"channel": 1, "slope": "POS"},
+  "signal_frequency_hz": 1000000,
+  "cycles_visible": 4,
+  "purpose": "Check clock-to-data timing"
+}
+```
+
+Labels and purpose are evidence metadata supplied by the caller, not interpreted
+as device semantics. Verify attenuation, probe loading and threshold assumptions
+against the actual circuit before relying on timing or voltage conclusions.
+
 ## Agent Data Usage
 
 Prefer numeric readings and local waveform analysis. Large results and raw arrays
@@ -188,9 +253,12 @@ The default suite is offline and needs no instrument. See
 reference data without installing Python on the host. Image smoke tests also run
 in CI; see [Docker tests](docs/docker.md#container-tests).
 DHO814 LAN smoke tests passed on firmware 00.01.05 without an input signal.
-Signal accuracy, exhaustive command behavior, full-depth transfers and fault
-recovery remain unverified. See [hardware test coverage and instructions](docs/dho814-support.md#verification-and-maintenance)
-before running the opt-in live test, which temporarily changes scope settings.
+Additional Pico-driven acceptance tests cover statistics, cursors, search, mask,
+recording/replay, meters, math/reference, RAW transfers, setup restoration, and
+UART, I2C, and SPI decoding. CAN and parallel decoding, exhaustive behavior for all
+897 catalog forms, destructive operations, and deliberate transport-fault recovery
+remain unverified. See the [advanced acceptance report](captures/dho814_advanced_mcp_acceptance_report.json)
+and [hardware test coverage and instructions](docs/dho814-support.md#verification-and-maintenance).
 
 ## Acknowledgements
 

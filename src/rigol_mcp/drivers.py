@@ -78,7 +78,7 @@ class ScopeDriver:
         raise NotImplementedError
 
     # --- waveform ---
-    def prepare_waveform(self, scope: pyvisa.resources.Resource) -> None:
+    def prepare_waveform(self, scope: pyvisa.resources.Resource, source: str | None = None) -> None:
         """Any setup needed before ``:WAV:PRE?``/``:WAV:DATA?`` (default: nothing)."""
 
     def read_waveform_data(self, scope: pyvisa.resources.Resource) -> str:
@@ -193,7 +193,9 @@ class DHODriver(ScopeDriver):
         scope.write(":AUToset")
         scope.query("*OPC?")
 
-    def prepare_waveform(self, scope: pyvisa.resources.Resource) -> None:
+    def prepare_waveform(self, scope: pyvisa.resources.Resource, source: str | None = None) -> None:
+        if source and source.upper().startswith("MATH"):
+            return
         scope.write(":WAV:STAR 1")
         scope.write(":WAV:STOP 1000")
 

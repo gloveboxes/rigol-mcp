@@ -108,8 +108,14 @@ async def test_stdio_startup_and_discovery(protocol_mode, enable_raw, tmp_path):
             assert "strictly sequentially" in client.instructions
             listing = await client.list_tools()
             names = [tool.name for tool in listing.tools]
-            assert len(names) == len(set(names)) == (22 if enable_raw else 21)
+            assert len(names) == len(set(names)) == (46 if enable_raw else 45)
             assert ("send_raw" in names) == enable_raw
+            assert {
+                "configure_timing_capture", "capture_waveforms", "acquire_and_capture",
+                "analyze_pwm_envelope",
+                "measure_statistics", "configure_mask_test", "get_search_results",
+                "save_scope_setup", "restore_scope_setup", "configure_recording",
+            } <= set(names)
             for tool in listing.tools:
                 Draft202012Validator.check_schema(tool.input_schema)
             result = await client.call_tool("measure", {})
@@ -181,8 +187,8 @@ async def test_raw_waveform_arrays_stay_on_disk(protocol_mode, instrument_call, 
 async def test_tool_definitions_have_a_context_budget():
     tools = await srv.list_tools()
     definitions = json.dumps([tool.model_dump(by_alias=True, exclude_none=True) for tool in tools], separators=(",", ":"))
-    assert sum(len(tool.description or "") for tool in tools) < 5000
-    assert len(definitions) < 11500
+    assert sum(len(tool.description or "") for tool in tools) < 7000
+    assert len(definitions) < 33000
 
 
 async def test_transfer_schema_defaults_match_implementation():
@@ -203,7 +209,7 @@ async def test_transfer_schema_defaults_match_implementation():
     ("get_waveform", ["Does not stop", "transfer settings changed", "never samples"]),
     ("measure", ["Registers", "results panel", "disabled channels"]),
     ("measure_between", ["Registers", "results panel", "disabled sources"]),
-    ("set_trigger", ["Always selects EDGE", "no arguments", "not DHO814"]),
+    ("set_trigger", ["top-level source/slope/level", "advanced trigger_type", "validated type-specific"]),
     ("set_cursors", ["OFF accepts no", "rejects positions here", "DHO814"]),
     ("scpi_execute", ["Non-reset writes", "No retries or completion guarantee"]),
     ("check_error", ["16", "only the first"]),

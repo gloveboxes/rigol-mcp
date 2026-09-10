@@ -2,6 +2,7 @@
 VISA access is faked; no hardware involved."""
 
 import time
+import json
 
 import pyvisa
 import pytest
@@ -93,8 +94,13 @@ async def test_action_tools_never_replay_after_timeout(monkeypatch, tool):
 
     target = "check_scpi_error" if tool == "check_error" else tool
     monkeypatch.setattr(srv, target, uncertain)
+    arguments = {"command": "*RST"} if tool == "send_raw" else {}
+    if tool == "autoscale":
+        monkeypatch.setattr(srv, "get_scope_state", lambda scope: {"state": "before"})
+        request = json.loads((await srv.call_tool(tool, arguments))[0].text)
+        arguments["confirm_token"] = request["confirm_token"]
     with pytest.raises(pyvisa.errors.VisaIOError):
-        await srv.call_tool(tool, {"command": "*RST"} if tool == "send_raw" else {})
+        await srv.call_tool(tool, arguments)
     assert calls == [1]
 
 
@@ -106,13 +112,15 @@ async def test_configuration_readback_failure_does_not_replay_write(monkeypatch)
 
     def reader(*args):
         calls.append("read")
-        raise _tmo()
+        if calls.count("read") == 2:
+            raise _tmo()
+        return {"scale_s_div": "0.002"}
 
     monkeypatch.setattr(srv, "set_timebase", setter)
     monkeypatch.setattr(srv, "get_timebase_state", reader)
     with pytest.raises(pyvisa.errors.VisaIOError):
         await srv.call_tool("set_timebase", {"scale_s_div": 0.001})
-    assert calls == ["write", "read"]
+    assert calls == ["read", "write", "read"]
 
 
 async def test_channel_setter_only_reads_its_own_channel(monkeypatch):
@@ -242,3 +250,258 @@ async def test_send_raw_call_works_when_enabled(monkeypatch):
     monkeypatch.setattr(srv, "_call", fake_call)
     result = await srv.call_tool("send_raw", {"command": ":CHAN1:SCAL?"})
     assert result[0].text == "1.000000e+00"
+
+
+# --------------------------------------------------------------------------- confirmation gating
+
+async def test_autoscale_requires_bound_single_use_confirmation(monkeypatch):
+    calls = []
+
+    async def fake_call(fn, *args, **kwargs):
+        calls.append(fn)
+        return {"ok": True}
+
+    monkeypatch.setattr(srv, "_call", fake_call)
+    first = await srv.call_tool("autoscale", {})
+    request = json.loads(first[0].text)
+    assert request["code"] == "USER_CONFIRMATION_REQUIRED"
+    assert calls == []
+
+    confirmed = await srv.call_tool("autoscale", {"confirm_token": request["confirm_token"]})
+    assert json.loads(confirmed[0].text) == {"ok": True}
+    assert len(calls) == 1
+
+    with pytest.raises(ValueError, match="confirmation token"):
+        await srv.call_tool("autoscale", {"confirm_token": request["confirm_token"]})
+
+
+async def test_dangerous_scpi_write_requires_confirmation(monkeypatch):
+    calls = []
+
+    async def fake_call(fn, *args, **kwargs):
+        calls.append((fn, args, kwargs))
+        return {"operation": "write"}
+
+    monkeypatch.setattr(srv, "_call", fake_call)
+    arguments = {"command": "*RST", "operation": "write"}
+    first = await srv.call_tool("scpi_execute", arguments)
+    request = json.loads(first[0].text)
+    assert request["code"] == "USER_CONFIRMATION_REQUIRED"
+    assert calls == []
+
+    arguments["confirm_token"] = request["confirm_token"]
+    result = await srv.call_tool("scpi_execute", arguments)
+    assert json.loads(result[0].text) == {"operation": "write"}
+    assert len(calls) == 1
+
+
+async def test_setup_snapshot_and_restore_use_file_backed_scpi(monkeypatch):
+    calls = []
+    state = {
+        "timebase": {"scale_s_div": "1e-6"},
+        "channels": {"CHAN1": {"display": True}},
+        "trigger": {"mode": "EDGE", "status": "STOP"},
+    }
+
+    async def fake_call(fn, *args, **kwargs):
+        calls.append((fn, args, kwargs))
+        if fn is srv.get_scope_state:
+            return state
+        return {"path": "/data/captures/capture_0123456789abcdef0123456789abcdef.bin"}
+
+    monkeypatch.setattr(srv, "_call", fake_call)
+    monkeypatch.setattr(srv.Path, "write_text", lambda *args, **kwargs: None)
+    monkeypatch.setattr(srv.Path, "is_file", lambda self: False)
+    saved = json.loads((await srv.call_tool("save_scope_setup", {}))[0].text)
+    assert saved["path"].endswith(".bin")
+    assert saved["state_captured"] is True
+    assert calls[0][0] is srv.scpi.execute
+    assert calls[0][1] == (":SYSTem:SETup", "query")
+
+    arguments = {"path": saved["path"]}
+    request = json.loads((await srv.call_tool("restore_scope_setup", arguments))[0].text)
+    assert request["code"] == "USER_CONFIRMATION_REQUIRED"
+    arguments["confirm_token"] = request["confirm_token"]
+    restored = json.loads((await srv.call_tool("restore_scope_setup", arguments))[0].text)
+    write_call = next(call for call in reversed(calls) if call[0] is srv.scpi.execute)
+    assert write_call[1] == (":SYSTem:SETup", "write")
+    assert write_call[2]["data_path"] == saved["path"]
+    assert write_call[2]["_attempts"] == 1
+    assert restored["verification"]["verified"] is False
+
+
+def test_setup_state_comparison_ignores_trigger_run_status():
+    expected = {
+        "timebase": {"scale_s_div": "1e-6"},
+        "channels": {"CHAN1": {"display": True}},
+        "trigger": {"mode": "EDGE", "status": "RUN"},
+    }
+    actual = {
+        "timebase": {"scale_s_div": "1e-6"},
+        "channels": {"CHAN1": {"display": True}},
+        "trigger": {"mode": "EDGE", "status": "STOP"},
+    }
+    assert srv._state_mismatches(expected, actual) == {}
+    actual["timebase"]["scale_s_div"] = "2e-6"
+    assert "timebase" in srv._state_mismatches(expected, actual)
+
+
+async def test_scpi_query_does_not_require_confirmation(monkeypatch):
+    async def fake_call(fn, *args, **kwargs):
+        return {"operation": "query"}
+
+    monkeypatch.setattr(srv, "_call", fake_call)
+    result = await srv.call_tool("scpi_execute", {"command": "*IDN"})
+    assert json.loads(result[0].text) == {"operation": "query"}
+
+
+async def test_semantic_tools_are_registered_with_safety_metadata():
+    tools = {tool.name: tool for tool in await srv.list_tools()}
+    assert {
+        "analyze_waveform", "clear_measurements", "configure_acquisition",
+        "configure_meter", "get_meter_value", "configure_decode", "get_decode_result",
+        "configure_math", "configure_reference", "configure_histogram",
+        "configure_timing_capture", "capture_waveforms", "acquire_and_capture",
+        "measure_statistics", "configure_mask_test", "get_mask_results",
+        "configure_search", "get_search_results", "save_scope_setup", "restore_scope_setup",
+        "configure_recording", "get_recording_state", "control_recording_replay",
+    } <= tools.keys()
+    assert tools["analyze_waveform"].meta["rigol/operationClass"] == "measurement"
+    assert tools["analyze_waveform"].annotations.read_only_hint is False
+    assert tools["clear_measurements"].annotations.destructive_hint is True
+    assert tools["configure_acquisition"].meta["rigol/operationClass"] == "configuration"
+    assert tools["restore_scope_setup"].annotations.destructive_hint is True
+    assert tools["control_recording_replay"].meta["rigol/operationClass"] == "action"
+
+
+async def test_semantic_configuration_route_is_not_retried(monkeypatch):
+    calls = []
+
+    async def fake_call(fn, *args, **kwargs):
+        calls.append((fn, args, kwargs))
+        return {"requested": {"acquisition_type": "PEAK"}, "applied": {"acquisition_type": "PEAK"}}
+
+    monkeypatch.setattr(srv, "_call", fake_call)
+    result = await srv.call_tool("configure_acquisition", {"acquisition_type": "PEAK"})
+    assert json.loads(result[0].text)["applied"]["acquisition_type"] == "PEAK"
+    assert calls[0][0] is srv.semantic.configure_acquisition
+    assert calls[0][2]["_attempts"] == 1
+
+
+async def test_advanced_trigger_route_preserves_nested_settings(monkeypatch):
+    calls = []
+
+    async def fake_call(fn, *args, **kwargs):
+        calls.append((fn, kwargs))
+        return {"applied": {"type": "PULSE"}}
+
+    monkeypatch.setattr(srv, "_call", fake_call)
+    result = await srv.call_tool("set_trigger", {
+        "trigger_type": "PULSE", "source": "CHAN1",
+        "settings": {"condition": "LESS", "upper_s": 1e-6},
+    })
+    assert json.loads(result[0].text)["applied"]["type"] == "PULSE"
+    assert calls[0][0] is srv.semantic.configure_trigger
+    assert calls[0][1]["settings"] == {"source": "CHAN1", "condition": "LESS", "upper_s": 1e-6}
+    assert calls[0][1]["_attempts"] == 1
+
+
+async def test_existing_setter_returns_public_requested_names(monkeypatch):
+    reads = iter([{"scale_s_div": "0.002"}, {"scale_s_div": "0.001"}])
+    monkeypatch.setattr(srv, "set_timebase", lambda *args, **kwargs: None)
+    monkeypatch.setattr(srv, "get_timebase_state", lambda *args: next(reads))
+    result = json.loads((await srv.call_tool("set_timebase", {"scale_s_div": "0.001"}))[0].text)
+    assert result["requested"] == {"scale_s_div": "0.001"}
+    assert result["changed"] is True
+
+
+def test_audit_log_redacts_tokens_and_setup_payload(monkeypatch, tmp_path):
+    audit = tmp_path / "audit.jsonl"
+    monkeypatch.setenv("RIGOL_AUDIT_LOG", str(audit))
+    srv._audit_event("scpi_execute", {
+        "command": "not-a-command", "operation": "write",
+        "confirm_token": "secret", "data_base64": "AAAA",
+    }, "error", "invalid")
+    record = json.loads(audit.read_text())
+    assert record["operation_class"] == "unknown"
+    assert record["arguments"]["confirm_token"] == "<redacted>"
+    assert record["arguments"]["data_base64"] == "<4 characters>"
+
+
+async def test_timing_capture_route_is_generic_and_not_retried(monkeypatch):
+    calls = []
+
+    async def fake_call(fn, *args, **kwargs):
+        calls.append((fn, kwargs))
+        return {"applied": {"trigger_source": "CHAN1"}}
+
+    monkeypatch.setattr(srv, "_call", fake_call)
+    arguments = {
+        "channels": [{"channel": 1, "label": "CLOCK", "voltage_domain_v": 3.3}],
+        "trigger": {"channel": 1}, "signal_frequency_hz": 1_000_000,
+        "purpose": "Verify translated clock",
+    }
+    result = await srv.call_tool("configure_timing_capture", arguments)
+    assert json.loads(result[0].text)["applied"]["trigger_source"] == "CHAN1"
+    assert calls[0][0] is srv.semantic.configure_timing_capture
+    assert calls[0][1]["purpose"] == "Verify translated clock"
+    assert calls[0][1]["_attempts"] == 1
+
+
+def test_multi_channel_capture_requires_stopped_acquisition(monkeypatch):
+    from tests.conftest import FakeScope
+
+    instrument = FakeScope(responses={":TRIGger:STATus?": "RUN"})
+    monkeypatch.setattr(srv, "get_waveform", lambda *args: pytest.fail("waveform read while running"))
+    with pytest.raises(ValueError, match="Stop acquisition"):
+        srv._capture_stopped_waveforms(instrument, ["CHAN1", "CHAN2"])
+
+
+def test_acquire_and_capture_stops_after_timeout(monkeypatch):
+    from tests.conftest import FakeScope
+
+    instrument = FakeScope(responses={
+        ":TRIGger:STATus?": "WAIT",
+        ":SYSTem:ERRor?": "0,No error",
+    })
+    times = iter([0.0, 1.0])
+    monkeypatch.setattr(srv.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(srv.time, "sleep", lambda _: None)
+    with pytest.raises(TimeoutError, match="acquisition stopped"):
+        srv._acquire_and_capture(instrument, ["CHAN1"], 0.5, 0.1)
+    assert instrument.written == [":SINGle", ":STOP"]
+
+
+def test_acquire_and_capture_attributes_single_error_before_polling():
+    from tests.conftest import FakeScope
+
+    errors = ['-200,"Command execute failed"']
+    instrument = FakeScope(responses={
+        ":SYSTem:ERRor?": lambda: errors.pop(0) if errors else '0,"No error"',
+    })
+
+    with pytest.raises(RuntimeError, match='SCPI error after :SINGle: -200'):
+        srv._acquire_and_capture(instrument, ["MATH1"], 0.5, 0.1)
+
+    assert instrument.written == [":SINGle"]
+
+
+async def test_capture_waveforms_saves_raw_and_returns_analysis(monkeypatch, tmp_path):
+    monkeypatch.setenv("RIGOL_DATA_DIR", str(tmp_path))
+    waveform = {
+        "channel": "CHAN1", "points": 4, "time_increment_s": 1e-6,
+        "time_start_s": 0.0, "time_end_s": 3e-6,
+        "vmin_v": -1.0, "vmax_v": 1.0, "vmean_v": 0.0,
+        "times_s": [0.0, 1e-6, 2e-6, 3e-6], "voltages_v": [-1.0, 1.0, -1.0, 1.0],
+    }
+
+    async def fake_call(fn, *args, **kwargs):
+        return {"CHAN1": waveform}
+
+    monkeypatch.setattr(srv, "_call", fake_call)
+    result = json.loads((await srv.call_tool(
+        "capture_waveforms", {"channels": ["CHAN1"], "label": "clock"},
+    ))[0].text)
+    assert result["label"] == "clock"
+    assert result["channels"]["CHAN1"]["valid"] is True
+    assert (tmp_path / result["path"].split("/")[-1]).exists()

@@ -1,0 +1,89 @@
+{
+  "gpio": 16,
+  "voltage_domain_v": 3.3,
+  "system_clock_hz": 150000000,
+  "edge_timing_jitter_tolerance_percent": 2.0,
+  "cases": [
+    {
+      "id": "square_1khz_50pct",
+      "frequency_hz": 1000,
+      "duty_percent": 50.0,
+      "frequency_tolerance_percent": 1.0,
+      "duty_tolerance_percent": 3.0,
+      "vpp_min_v": 3.0,
+      "vpp_max_v": 3.6
+    },
+    {
+      "id": "pulse_10khz_25pct",
+      "frequency_hz": 10000,
+      "duty_percent": 25.0,
+      "frequency_tolerance_percent": 1.0,
+      "duty_tolerance_percent": 3.0,
+      "vpp_min_v": 3.0,
+      "vpp_max_v": 3.6
+    },
+    {
+      "id": "square_1mhz_50pct",
+      "frequency_hz": 1000000,
+      "duty_percent": 50.0,
+      "frequency_tolerance_percent": 1.0,
+      "duty_tolerance_percent": 4.0,
+      "vpp_min_v": 2.8,
+      "vpp_max_v": 3.6
+    },
+    {
+      "id": "square_6mhz_50pct",
+      "frequency_hz": 6000000,
+      "duty_percent": 50.0,
+      "frequency_tolerance_percent": 1.0,
+      "duty_tolerance_percent": 4.0,
+      "vpp_min_v": 2.8,
+      "vpp_max_v": 3.8
+    },
+    {
+      "id": "pulse_5mhz_25pct",
+      "frequency_hz": 5000000,
+      "duty_percent": 25.0,
+      "frequency_tolerance_percent": 1.0,
+      "duty_tolerance_percent": 4.0,
+      "vpp_min_v": 2.8,
+      "vpp_max_v": 3.8
+    },
+    {
+      "id": "square_10mhz_50pct",
+      "frequency_hz": 10000000,
+      "duty_percent": 50.0,
+      "frequency_tolerance_percent": 1.0,
+      "duty_tolerance_percent": 4.0,
+      "vpp_min_v": 2.8,
+      "vpp_max_v": 3.8
+    },
+    {
+      "id": "pulse_10mhz_25pct",
+      "frequency_hz": 10000000,
+      "duty_percent": 25.0,
+      "frequency_tolerance_percent": 1.0,
+      "duty_tolerance_percent": 4.0,
+      "vpp_min_v": 2.8,
+      "vpp_max_v": 3.8
+    },
+    {
+      "id": "square_20mhz_50pct",
+      "frequency_hz": 20000000,
+      "duty_percent": 50.0,
+      "frequency_tolerance_percent": 2.0,
+      "duty_tolerance_percent": 5.0,
+      "vpp_min_v": 2.5,
+      "vpp_max_v": 3.8
+    },
+    {
+      "id": "square_50mhz_50pct",
+      "frequency_hz": 50000000,
+      "duty_percent": 50.0,
+      "frequency_tolerance_percent": 2.0,
+      "duty_tolerance_percent": 5.0,
+      "vpp_min_v": 2.0,
+      "vpp_max_v": 3.8
+    }
+  ]
+}
