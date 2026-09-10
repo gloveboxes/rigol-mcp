@@ -5,9 +5,11 @@ description: "Use when controlling or testing a Rigol oscilloscope through MCP: 
 
 # Rigol Scope
 
-Use the selected workspace MCP server: `rigol-docker` (Docker) or
-`rigol-apple-container` (Apple
-Container). Never use both against one scope. It speaks MCP over stdio and connects to
+Use the configured MCP server. Standalone setups name it `rigol-scope`; the
+repository development configuration uses `rigol-docker` and
+`rigol-apple-container`. Determine the runtime from the selected entry's command
+(`docker` or `container`), not its name. Never use both against one scope.
+It speaks MCP over stdio and connects to
 the instrument over LAN/TCP port 5555. The main target is DHO814 (DHO800 series);
 the reference covers DHO800/DHO900, not DHO8000/DHO9000. Do not infer support for
 other models from a family name alone.
@@ -17,13 +19,17 @@ other models from a family name alone.
 1. Use the selected server in `.vscode/mcp.json`. Its runtime must be running and
   `rigol-mcp:local` must exist in that runtime's image store. Build from the root
   with `docker build -t rigol-mcp:local .` or `container build -t rigol-mcp:local .`,
-  matching the selected runtime, then restart that server. Apple Container also
+  matching the selected runtime. After rebuilding, ask the user to restart the
+  selected MCP server and wait for confirmation before resuming instrument calls.
+  Do not stop, replace, or restart its container yourself. Apple Container also
   needs one-time capture-volume initialization; see `docs/apple-container.md`.
 2. The configuration passes `env.RIGOL_IP` into the container with `-e RIGOL_IP`.
    Edit that value for a different scope; the image contains no scope address.
+  It also forwards `RIGOL_ENABLE_SEND_RAW`, which remains `0` by default.
   The container runtime must reach the scope's TCP port 5555.
 3. If tools are unavailable, have the user run **MCP: List Servers**, select
-  **rigol-docker** or **rigol-apple-container**, and start/restart it, accepting any trust prompt themselves. Ensure
+  the configured server (`rigol-scope`, or the chosen development entry), and
+  start/restart it, accepting any trust prompt themselves. Ensure
    the server's tools are enabled in chat. A skill cannot grant tool access.
 4. Discover the available tools. Names below are the server's logical tool names;
    use the actual names exposed by the MCP client, which may include a namespace.

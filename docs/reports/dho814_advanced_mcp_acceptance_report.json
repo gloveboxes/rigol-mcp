@@ -1,0 +1,60 @@
+{
+  "date": "2026-09-10",
+  "instrument": "RIGOL TECHNOLOGIES,DHO814,DHO8A283510022,00.01.05",
+  "generator": {
+    "board": "pico2_w",
+    "system_clock_hz": 150000000,
+    "gpio_to_scope": {
+      "GP16": "CHAN1",
+      "GP18": "CHAN2"
+    }
+  },
+  "passed": {
+    "measure_statistics": "Finite live frequency statistics returned.",
+    "cursors": "Manual cursor write/readback and reciprocal interval passed at 1 MHz.",
+    "search": "Four rising-edge events returned in two correctly paginated pages.",
+    "recording": "Frame recording, selection, navigation, and replay state readback passed.",
+    "meters": "DVM and counter configuration/read paths passed; invalid acquisition-dependent values were not treated as accuracy evidence.",
+    "math": "Math configuration and DHO math NORM waveform capture passed.",
+    "reference": "Reference capture and readback passed.",
+    "mask": "Mask creation succeeded after math and decoder overlays were disabled; counters reported 2 failed, 1 passed, 3 total.",
+    "uart_decode": "115200-baud 8N1 decoded RIGOL MCP 55 AA with CR/LF.",
+    "i2c_decode": "Native START trigger decoded write address 0x50, data 0xA5, ACK 0.",
+    "spi_decode": "100 kHz mode-0 timeout-framed transfer decoded MOSI 0xA5 without error.",
+    "raw_transfer": "Aligned 312500-point RAW channel transfers completed.",
+    "setup_restore": "Binary setup restore completed; its reported 4.5 V trigger-level mismatch was corrected and verified at 1.65 V.",
+    "error_queue": "No error"
+  },
+  "fixed": [
+    "Advanced configuration requested/applied mismatch reporting.",
+    "Per-write SCPI error attribution in compound semantic operations.",
+    "Recording replay action state readback.",
+    "Complete IEEE definite-block decoder result reads without stream desynchronization.",
+    "DHO math waveform capture without invalid analog range commands.",
+    "Acquisition action error draining and attribution.",
+    "Protocol-specific decoder threshold configuration through settings.thresholds_v.",
+    "DHO readback aliases for ASCII, I2C, TIMEOUT, and START.",
+    "Delayed/zoom timebase reset during coordinated timing capture.",
+    "Clear NORM waveform diagnostic when decoder overlays block transfer.",
+    "Duplicated CHANnel1 tokens in generated I2C and SPI trigger enums.",
+    "Deterministic Pico UART, I2C, and SPI decoder fixtures."
+  ],
+  "limitations": [
+    "The current chat retained the pre-restart configure_decode schema; a new chat/tool discovery is needed before thresholds_v can be submitted through the UI, although server/unit validation passed.",
+    "CAN and parallel decoding were not physically exercised because no matching two-wire Pico fixture was connected.",
+    "Deliberate TCP interruption/retry testing was not performed because it can leave state-changing operations with unknown outcomes.",
+    "Factory reset, autoscale, LAN changes, scope-side file overwrite, and self-test were intentionally excluded as destructive or disruptive.",
+    "Mask RUN can return to STOP after processing captures; callers must inspect counters and applied state rather than assuming persistent operation."
+  ],
+  "final_state": {
+    "pico_firmware": "phase_1mhz_180deg",
+    "scope_status": "STOP",
+    "time_scale_s_div": 4e-7,
+    "channel_1_display": true,
+    "channel_2_display": true,
+    "trigger_source": "CHAN1",
+    "trigger_slope": "POS",
+    "trigger_level_v": 1.65,
+    "scpi_error": "No error"
+  }
+}

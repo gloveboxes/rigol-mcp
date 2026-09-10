@@ -7,7 +7,7 @@
         "run", "--rm", "-i", "--read-only",
         "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m",
         "--cap-drop=ALL", "--security-opt=no-new-privileges",
-        "-e", "RIGOL_IP",
+        "-e", "RIGOL_IP", "-e", "RIGOL_ENABLE_SEND_RAW",
         "--mount", "type=volume,src=rigol-mcp-data,dst=/data",
         "rigol-mcp:local"
       ],
@@ -23,7 +23,7 @@
         "run", "--rm", "-i", "--read-only", "--progress", "none",
         "--tmpfs", "/tmp",
         "--cap-drop", "ALL",
-        "-e", "RIGOL_IP",
+        "-e", "RIGOL_IP", "-e", "RIGOL_ENABLE_SEND_RAW",
         "--mount", "type=volume,source=rigol-mcp-data,target=/data",
         "rigol-mcp:local"
       ],
