@@ -1,22 +1,6 @@
 {
   "servers": {
-    "rigol-docker": {
-      "type": "stdio",
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i", "--read-only",
-        "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m",
-        "--cap-drop=ALL", "--security-opt=no-new-privileges",
-        "-e", "RIGOL_IP", "-e", "RIGOL_ENABLE_SEND_RAW",
-        "--mount", "type=volume,src=rigol-mcp-data,dst=/data",
-        "rigol-mcp:local"
-      ],
-      "env": {
-        "RIGOL_IP": "192.168.1.43",
-        "RIGOL_ENABLE_SEND_RAW": "0"
-      }
-    },
-    "rigol-apple-container": {
+    "rigol-scope": {
       "type": "stdio",
       "command": "container",
       "args": [

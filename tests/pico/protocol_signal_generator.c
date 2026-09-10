@@ -49,6 +49,7 @@ static void i2c_byte(uint8_t value) {
 }
 
 static void send_i2c_frame(void) {
+  static const uint8_t message[] = "Dave Glover";
   release_high(PRIMARY_GPIO);
   release_high(SECONDARY_GPIO);
   i2c_half_period();
@@ -56,7 +57,8 @@ static void send_i2c_frame(void) {
   i2c_half_period();
   drive_low(PRIMARY_GPIO);
   i2c_byte(0xA0);
-  i2c_byte(0xA5);
+  for (size_t index = 0; index < sizeof(message) - 1; ++index)
+    i2c_byte(message[index]);
   drive_low(SECONDARY_GPIO);
   release_high(PRIMARY_GPIO);
   i2c_half_period();
@@ -96,10 +98,10 @@ int main(void) {
   gpio_init(SECONDARY_GPIO);
   release_high(PRIMARY_GPIO);
   release_high(SECONDARY_GPIO);
-  while (true) {
-    send_i2c_frame();
-    sleep_ms(1);
-  }
+  sleep_ms(100);
+  send_i2c_frame();
+  while (true)
+    tight_loop_contents();
 #elif PROTOCOL_MODE == 3
   gpio_init(PRIMARY_GPIO);
   gpio_init(SECONDARY_GPIO);
