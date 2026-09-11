@@ -28,7 +28,21 @@ For example:
 
 > Save the scope setup. Configure CH1 and CH2 for two 3.3 V signals at 1 MHz, capture them together, and measure their phase difference. Ask before restoring the saved setup.
 
-The response comes from instrument measurements rather than an estimate based on a screenshot.
+![scope capture](./media/example-capture.jpeg)
+
+The response comes from instrument measurements rather than an estimate based on a screenshot. Lesson learned, probe grounding springs are your friend.
+
+## The Skill That Guides the Agent
+
+The included [rigol-scope skill](https://github.com/gloveboxes/rigol-mcp/blob/main/.github/skills/rigol-scope/SKILL.md) guides Copilot through a repeatable workflow: check the scope, save its setup, configure, capture, and measure.
+
+For example:
+
+> Check whether CH1 has a 1 MHz PWM signal with a 25% duty cycle. Save the setup first, and ask before restoring it.
+
+Copilot can compare the measured frequency and high-pulse width against the expected 1 MHz and 250 ns. The skill favours numeric readings over screenshots, keeps scope calls sequential, and checks that settings took effect. Invalid readings prompt investigation, not invented results.
+
+MCP provides access; the skill provides guidance. Asking before restoration keeps that decision with me.
 
 ## A Pico Makes a Useful Test Source
 
@@ -44,13 +58,11 @@ Comparing against the requested label alone would have made a good result look w
 
 ## The Scope Also Helped Debug the Server
 
-The DHO814 could ignore a horizontal-scale change while acquisition was stopped. Sending a command successfully was not proof that anything had changed. The timing tool now briefly runs acquisition to apply those settings, returns it to STOP, and checks the readback.
+I used GitHub Copilot with GPT-5.6 Sol and GPT-6 Astra to write my extensions to the MCP server, then test and debug them using the DHO814 through MCP. Testing on the scope caught problems the mocked instrument had missed.
 
-Another test produced apparently excessive voltage swing. Raw minima and maxima included overshoot and undershoot, so the analysis now reports those separately from settled logic levels.
+For example, the DHO814 sometimes ignored horizontal-scale changes while acquisition was stopped. The timing tool now briefly runs acquisition to apply the settings, stops it again, and checks the readback.
 
-I also caught static PWM being described as modulated because sampling differences changed the estimated duty cycle. The analysis now reports confidence and sample counts, and avoids treating small variations as modulation.
-
-I would rather get a qualified measurement than a very precise-looking number with the wrong interpretation.
+Live tests also exposed misleading analysis: overshoot and undershoot exaggerated the reported voltage swing, and sampling differences made static PWM look modulated. The analysis now separates settled logic levels from overshoot and undershoot, and reports confidence and sample counts before calling duty-cycle variation modulation.
 
 ## Reading I2C, SPI, and UART
 
@@ -72,9 +84,9 @@ Screenshots help with display questions: zoom windows, overlays, and cursor posi
 
 ## Trying It on Your Bench
 
-You'll need a supported Rigol scope reachable over Ethernet and an MCP client. The server runs with Docker on Windows, Linux, and macOS, or Apple Container on macOS. The DHO814 is the primary hardware-tested target.
+You’ll need a supported Rigol scope reachable over Ethernet and an MCP client. The server runs with Docker on Windows, Linux, and macOS, or with Apple Container on macOS. The DHO814 is the primary hardware-tested model, but the MCP server uses the Rigol DHO800/900 series API, so I'd expect other models in these families to work too.
 
-Follow the [README](https://github.com/gloveboxes/rigol-mcp#readme), choose one runtime, set RIGOL_IP to your scope's address, and start the rigol-scope server in your client. No host Python installation is needed.
+Follow the [README](https://github.com/gloveboxes/rigol-mcp#readme), choose one runtime, set RIGOL_IP to your scope's address, and start the rigol-scope server in your client.
 
 Check probe attenuation, voltage limits, and grounding. Scope ground clips are not floating inputs. Use one server per scope, save the setup before broad changes, and verify restoration afterwards. An assistant cannot check your physical wiring for you.
 
