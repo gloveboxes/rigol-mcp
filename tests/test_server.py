@@ -341,6 +341,10 @@ async def test_dangerous_scpi_write_requires_confirmation(monkeypatch):
     first = await srv.call_tool("scpi_execute", arguments)
     request = json.loads(first[0].text)
     assert request["code"] == "USER_CONFIRMATION_REQUIRED"
+    assert request["risk"] == (
+        "Restore Default Settings replaces the current acquisition, channel, trigger, "
+        "display, and system settings."
+    )
     assert calls == []
 
     arguments["confirm_token"] = request["confirm_token"]

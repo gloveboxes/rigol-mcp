@@ -257,8 +257,9 @@ async def test_transfer_schema_defaults_match_implementation():
     ("scpi_execute", ["Non-reset writes", "No retries or completion guarantee"]),
     ("check_error", ["16", "only the first"]),
     ("run", ["status may lag", "get_scope_state"]),
-    ("stop", ["retaining", "Not a clear or factory reset"]),
-    ("autoscale", ["changing", "Not capability discovery or factory reset"]),
+    ("stop", ["retaining", "Does not clear traces or restore defaults"]),
+    ("autoscale", ["changing", "Not capability discovery", "does not restore defaults"]),
+    ("restore_scope_setup", ["saved setup, not defaults", "requires confirmation", "never retried"]),
     ("send_raw", ["Text queries", "binary transfers", "no retries"]),
 ])
 async def test_tool_descriptions_disclose_operational_constraints(monkeypatch, name, phrases):

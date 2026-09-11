@@ -85,13 +85,29 @@ then retrieve one command's parameters and manual reference. Use `scpi_execute`
 with the command header, explicit `operation` and positional `arguments`.
 Replace `<n>` with the intended channel, bus or math index.
 
+## Defaults, Saved Setups and Autoscale
+
+- **Restore Default Settings**: use `scpi_execute` with `command="*RST"` and
+  `operation="write"` after checking its catalog entry. Explain that this replaces
+  current acquisition, channel, trigger, display and system settings. Follow the
+  single-use confirmation flow; do not describe this as reinstalling firmware or
+  promise that files, networking or calibration are unaffected without documentation.
+- **Restore a Saved Setup**: use `restore_scope_setup` with a saved snapshot path
+  and its confirmation flow. This restores that snapshot, not default settings.
+- **Autoscale**: use `autoscale` to fit the connected signal by adjusting channels,
+  timebase and trigger. This does not restore defaults.
+
+Clarify ambiguous reset requests. After restoring defaults, read back settings
+with `get_scope_state`; a successful write alone does not prove completion.
+Do not repeat the reset if readback fails; inspect state before any retry.
+
 ## State and Safety
 
 - Make only authorized changes. Before temporary tests, record settings and
   restore them afterward, including acquisition and waveform transfer settings.
   Use `save_scope_setup` before broad reconfiguration; restore the returned path
   with `restore_scope_setup` and its single-use confirmation flow.
-- Reset, autoscale, file overwrite, networking changes, control locking,
+- Restoring defaults, autoscale, file overwrite, networking changes, control locking,
   self-tests and setup imports require task authorization. Keep `send_raw`
   disabled unless explicitly needed and authorized.
 - Measurements and waveform reads can enable channels; measurements may need

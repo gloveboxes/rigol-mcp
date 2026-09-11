@@ -240,7 +240,10 @@ def _dangerous_scpi_write(arguments: dict) -> str | None:
     entry, _ = scpi.resolve(arguments["command"])
     command = entry["command"].upper()
     if command == "*RST":
-        return "Factory reset changes acquisition, channel, display, and system settings."
+        return (
+            "Restore Default Settings replaces the current acquisition, channel, trigger, "
+            "display, and system settings."
+        )
     if command.startswith((":SAVE", ":STORAGE", ":DISK", ":FILE")):
         return "This operation can create, overwrite, move, or delete files on the oscilloscope."
     if command.startswith(":SYSTEM") and any(
@@ -696,7 +699,7 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="restore_scope_setup",
-            description="Restore a generated setup snapshot. Replaces broad scope state, requires confirmation, and is never retried.",
+            description="Restore a saved setup, not defaults. Replaces scope state; requires confirmation; never retried.",
             inputSchema={"type": "object", "properties": {
                 "path": {"type": "string"},
                 "confirm_token": {"type": "string", "description": "Single-use token returned by the first call"},
@@ -912,7 +915,7 @@ async def list_tools() -> list[types.Tool]:
             name="stop",
             description=(
                 "Stop acquisition, retaining the displayed trace and settings. Immediate status may lag; "
-                "confirm STOP via get_scope_state. Not a clear or factory reset."
+                "confirm STOP via get_scope_state. Does not clear traces or restore defaults."
             ),
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
@@ -927,8 +930,8 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="autoscale",
             description=(
-                "Run auto-setup, changing channels, timebase and trigger; wait for completion and return state. "
-                "Not capability discovery or factory reset; no automatic retry."
+                "Fit the signal, changing channels, timebase and trigger; wait and return state. "
+                "Not capability discovery; does not restore defaults. No automatic retry."
             ),
             inputSchema={"type": "object", "properties": {
                 "confirm_token": {"type": "string", "description": "Single-use token returned by the first call"},
