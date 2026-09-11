@@ -156,10 +156,13 @@ Edit `env.RIGOL_IP` for your scope. The included [.vscode/mcp.json](.vscode/mcp.
 
 MCP tool discovery supplies descriptions and input schemas. Measurement lists and command signatures do not need to be copied from this README.
 
-1. Call `idn` to verify connectivity, model and firmware.
-2. Call `get_capabilities` for supported channels, measurements and model features.
-3. Call `get_scope_state` for current channel, timebase and trigger settings.
-4. Use the advertised convenience tools for common tasks. For other DHO814 operations,
+1. Call `inspect_scope` for identity, capabilities and current channel, timebase
+  and trigger settings in one sequential operation. Check `complete` and `errors`
+  before acting. Failed stages stop inspection without retrying; completed results
+  are retained. Set `verify_hardware=true` to enable channel/grid count probes
+  that read and clear SCPI errors; the default is `false`.
+2. Use `idn`, `get_capabilities` or `get_scope_state` for targeted queries.
+3. Use the advertised convenience tools for common tasks. For other DHO814 operations,
    search `scpi_catalog`, request one command's details, then use `scpi_execute`.
 
 `get_capabilities` labels each fact in an `evidence` map as **hardware-verified**, **documented**, or **unverified**. By default it checks DHO800/900 channel and grid counts against the scope, reporting model mismatches. Other facts still rely on model definitions; measurement lists do not establish measurement accuracy. Documented facts come from a locally reviewed, versioned dataset with publication, section and page citations. CI checks its consistency with the pinned command catalog; no reference material is fetched or trusted automatically at runtime. Use `verify_hardware=false` to skip these extra queries. See [capability evidence](docs/dho814-support.md#capability-evidence) for limitations. `scpi_catalog` comes from the bundled programming-guide reference, not from an API downloaded from the scope.

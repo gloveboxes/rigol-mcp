@@ -23,8 +23,12 @@ connects to the instrument at `RIGOL_IP` over LAN/TCP port 5555. Unrestricted
 1. Discover the registered tools and their schemas through tool search. Use the
    client-exposed names, which may include a namespace; names below are logical
    tool names.
-2. Call `idn`, `get_capabilities`, then `get_scope_state` sequentially. Confirm
-   the intended instrument and inspect its settings before making changes.
+2. Call `inspect_scope` for identity, capabilities and current settings. Check
+  `complete` and `errors`, confirm the intended instrument, and inspect its
+  settings before making changes. Hardware verification is opt-in with
+  `verify_hardware=true`; use it when channel/grid count probes are needed.
+  The individual `idn`, `get_capabilities` and `get_scope_state` tools remain
+  available for targeted queries.
 3. Choose the smallest workflow needed for the task. Call all instrument tools
    sequentially through this server; do not open another server or connection.
 

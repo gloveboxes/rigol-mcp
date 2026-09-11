@@ -106,6 +106,8 @@ server = Server(
     on_call_tool=_handle_call_tool,
     instructions=(
         "Rigol oscilloscope control over SCPI.\n"
+        "- Start with inspect_scope for identity, capabilities and current settings in one call. "
+        "Check complete and errors before acting; hardware verification is opt-in.\n"
         "- Read the scope with the data tools first: measure/measure_between for numeric "
         "readings, get_waveform for trace shape/frequency/amplitude analysis, "
         "get_scope_state for configuration. They return compact structured text that is "
@@ -150,7 +152,7 @@ _READ_ONLY_TOOLS = {
     "get_mask_results", "get_search_results", "save_scope_setup", "get_recording_state",
 }
 _MEASUREMENT_TOOLS = {
-    "get_capabilities", "screenshot", "measure", "measure_between", "get_waveform",
+    "inspect_scope", "get_capabilities", "screenshot", "measure", "measure_between", "get_waveform",
     "analyze_waveform", "analyze_pwm_envelope", "download_waveform", "capture_waveforms", "acquire_and_capture",
     "measure_statistics",
 }
@@ -336,9 +338,9 @@ async def list_tools() -> list[types.Tool]:
     tools = [
         types.Tool(
             name="read_capture",
-            description="Read generated data files under RIGOL_DATA_DIR, not screenshots or arbitrary files. "
-                        "No scope access. Byte offsets; escaping may shorten excerpts: follow next_offset. "
-                        "UTF-8 boundaries may replace characters; base64 is lossless. Read only needed excerpts.",
+            description="Read generated RIGOL_DATA_DIR excerpts, not screenshots. "
+                        "No scope I/O. Byte offsets; follow next_offset after escaping. "
+                        "UTF-8 boundaries may replace characters; base64 is lossless.",
             inputSchema={"type": "object", "properties": {
                 "path": {"type": "string"},
                 "offset": {"type": "integer", "minimum": 0},
@@ -348,9 +350,8 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="download_waveform",
-            description="Save a stopped DHO814 acquisition as time/value CSV; return path and timing. "
-                        "RAW/MAX read memory; NORM reads screen (required for math). Analog source "
-                        "must be enabled with data. Transfer settings are not restored; acquisition is unchanged.",
+            description="Export stopped DHO814 traces to CSV with path/timing. RAW/MAX: memory; NORM: screen/math. "
+                        "Analog source needs display/data. Transfer settings not restored; acquisition is unchanged.",
             inputSchema={"type": "object", "properties": {
                 "source": {"type": "string", "enum": ["CHAN1", "CHAN2", "CHAN3", "CHAN4", "MATH1", "MATH2", "MATH3", "MATH4"]},
                 "mode": {"type": "string", "enum": ["NORM", "RAW", "MAX"], "default": "RAW"},
@@ -360,20 +361,32 @@ async def list_tools() -> list[types.Tool]:
             }, "required": ["source"], "additionalProperties": False},
         ),
         types.Tool(
+            name="inspect_scope",
+            description=(
+                "Sequential identity/capabilities/settings. Failure: complete=false, errors, partial results; "
+                "no retry. Verification and initial connection clear SCPI errors."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "verify_hardware": {"type": "boolean", "default": False},
+                },
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
             name="get_capabilities",
-            description="Return model capabilities with per-field evidence: hardware-verified, "
-                        "documented or unverified. By default probe DHO800/900 channel/grid counts "
-                        "and report model mismatches; measurement lists are not accuracy validation. "
-                        "Probes read and clear SCPI errors. Set verify_hardware=false for identity/model data only.",
+            description="Capabilities/evidence, not accuracy validation. "
+                        "Default DHO800/900 channel/grid probes flag mismatches and clear errors; "
+                        "verify_hardware=false skips probes.",
             inputSchema={"type": "object", "properties": {
                 "verify_hardware": {"type": "boolean", "default": True},
             }, "additionalProperties": False},
         ),
         types.Tool(
             name="scpi_catalog",
-            description="Browse DHO814 command names (10 per page), or pass command for one "
-                        "signature, parameter types/enums and manual section. Filter by subsystem "
-                        "or search; command ignores other filters. No scope access. Fetch details before scpi_execute.",
+            description="Browse DHO814 commands by subsystem/search. command overrides filters: "
+                        "signature, types/enums, manual section. No scope I/O. Read before scpi_execute.",
             inputSchema={"type": "object", "properties": {
                 "subsystem": {"type": "string", "description": "Subsystem prefix, e.g. trigger or acquire"},
                 "search": {"type": "string", "description": "Command or parameter substring"},
@@ -384,11 +397,10 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="scpi_execute",
-            description="Execute one DHO814 catalog command; arguments are positional. Text over 2048 "
-                        "characters and binary are file-backed; inline_binary permits up to 1024 bytes. "
-                        "Scope enforces dynamic limits. Non-reset writes drain errors; queries may consume "
-                        "status/errors. No retries or completion guarantee. Can overwrite files, reset, "
-                        "change LAN or lock controls. Does not require send_raw enablement.",
+            description="Execute one DHO814 catalog command with positional arguments; no send_raw needed. "
+                        "Text >2048 chars/binary is file-backed; inline_binary allows 1024 bytes. "
+                        "Scope enforces dynamic limits. Non-reset writes drain errors; queries may consume status/errors. "
+                        "No retries or completion guarantee. May overwrite files, reset, change LAN or lock controls.",
             inputSchema={"type": "object", "properties": {
                 "command": {"type": "string", "description": "Header only; replace <n> with an index, no embedded arguments or command chains"},
                 "operation": {"type": "string", "enum": ["query", "write"], "default": "query"},
@@ -402,8 +414,7 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="screenshot",
             description=(
-                "Save a display PNG and return its path. Set include_image=true only when "
-                "visual inspection is necessary; otherwise prefer measure/get_waveform."
+                "Save display PNG; return path. include_image=true for visual questions; otherwise use measure/get_waveform."
             ),
             inputSchema={"type": "object", "properties": {
                 "include_image": {"type": "boolean", "default": False},
@@ -412,16 +423,14 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="idn",
             description=(
-                "Read identity (model, serial, firmware) and LAN/session/driver diagnostics. "
-                "Failure is reported in diagnostic text; inspect it, not only the MCP success flag."
+                "Read model/serial/firmware and LAN/session/driver diagnostics. Check diagnostic text for failure despite MCP success."
             ),
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         types.Tool(
             name="get_scope_state",
             description=(
-                "Read channel settings, timebase and trigger mode/status; source/slope/level only for EDGE. "
-                "Includes model capabilities without live channel/grid verification."
+                "Read channels, timebase, trigger mode/status (source/slope/level only for EDGE), and capabilities without live probes."
             ),
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
@@ -955,6 +964,35 @@ async def call_tool(name: str, arguments: dict) -> list[types.ContentBlock]:
     if name == "get_capabilities":
         result = await _call(get_capabilities, verify_hardware=arguments.get("verify_hardware", True))
         return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+    if name == "inspect_scope":
+        result = {"complete": False, "identity": None, "capabilities": None, "state": None, "errors": {}}
+        stage = "identity"
+
+        def inspect(instrument):
+            nonlocal stage
+            result["identity"] = idn(instrument)
+            set_driver_from_idn(result["identity"])
+            stage = "capabilities"
+            result["capabilities"] = get_capabilities(
+                instrument, verify_hardware=arguments.get("verify_hardware", False),
+            )
+            stage = "state"
+            result["state"] = {
+                "timebase": get_timebase_state(instrument),
+                "channels": {
+                    channel: get_channel_state(instrument, channel)
+                    for channel in result["capabilities"]["channels"]
+                },
+                "trigger": get_trigger_state(instrument),
+            }
+            result["complete"] = True
+
+        try:
+            await _call(inspect, _attempts=1)
+        except Exception as exc:
+            result["errors"][stage] = {"type": type(exc).__name__, "message": str(exc)}
+        result["connection"] = connection_info()
+        return [types.TextContent(type="text", text=json.dumps(result, separators=(",", ":")))]
     if name == "scpi_catalog":
         result = scpi.discover(**arguments)
         return [types.TextContent(type="text", text=json.dumps(result, indent=2))]

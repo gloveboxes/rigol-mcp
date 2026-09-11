@@ -57,7 +57,49 @@ async def test_capability_evidence_over_mcp(protocol_mode, monkeypatch, verify_h
     assert capabilities["evidence"]["measurement_items"]["status"] == "documented"
 
 
+@pytest.mark.parametrize("verify_hardware", [False, True])
+async def test_inspect_scope_over_mcp(protocol_mode, monkeypatch, verify_hardware):
+    instrument = FakeScope(responses={
+        "*IDN?": "RIGOL TECHNOLOGIES,DHO814,SN,1.0",
+        ":SYSTem:RAMount?": "2", ":SYSTem:GAMount?": "10", ":SYSTem:ERRor?": "0",
+        ":TIM:SCAL?": "0.001", ":TIM:OFFS?": "0", ":TIM:MODE?": "MAIN",
+        ":TRIGger:MODE?": "EDGE", ":TRIGger:STATus?": "STOP",
+        ":TRIGger:EDGE:SOURce?": "CHAN1", ":TRIGger:EDGE:SLOPe?": "POS",
+        ":TRIGger:EDGE:LEVel?": "1",
+    })
+    channels = [f"CHAN{number}" for number in range(1, 3 if verify_hardware else 5)]
+    for channel in channels:
+        for suffix, value in {"DISP": "1", "SCAL": "1", "OFFS": "0", "COUP": "DC", "PROB": "1"}.items():
+            instrument.responses[f":{channel}:{suffix}?"] = value
+    queries = []
+    original_query = instrument.query
+
+    def query(command):
+        queries.append(command)
+        return original_query(command)
+
+    monkeypatch.setattr(instrument, "query", query)
+    monkeypatch.setattr(srv, "get_scope", lambda: instrument)
+    async with Client(srv.server, mode=protocol_mode) as client:
+        response = await client.call_tool("inspect_scope", {"verify_hardware": verify_hardware})
+    assert not response.is_error
+    assert len(response.content[0].text) < srv._TEXT_BUDGET
+    result = json.loads(response.content[0].text)
+    assert result["complete"] is True
+    assert result["errors"] == {}
+    assert result["identity"] == instrument.responses["*IDN?"]
+    assert result["capabilities"]["channels"] == channels
+    assert list(result["state"]["channels"]) == channels
+    assert result["state"]["trigger"]["status"] == "STOP"
+    assert "capabilities" not in result["state"]
+    assert (":SYSTem:ERRor?" in queries) is verify_hardware
+    assert queries.count("*IDN?") == 2
+    assert instrument.written == []
+
+
 @pytest.mark.parametrize("name, arguments", [
+    ("inspect_scope", {"verify_hardware": "false"}),
+    ("inspect_scope", {"unexpected": True}),
     ("measure", {}),
     ("measure", {"channel": "CHAN5", "item": "FREQUENCY"}),
     ("nonexistent_tool", {}),
@@ -108,9 +150,10 @@ async def test_stdio_startup_and_discovery(protocol_mode, enable_raw, tmp_path):
             assert "strictly sequentially" in client.instructions
             listing = await client.list_tools()
             names = [tool.name for tool in listing.tools]
-            assert len(names) == len(set(names)) == (46 if enable_raw else 45)
+            assert len(names) == len(set(names)) == (47 if enable_raw else 46)
             assert ("send_raw" in names) == enable_raw
             assert {
+                "inspect_scope",
                 "configure_timing_capture", "capture_waveforms", "acquire_and_capture",
                 "analyze_pwm_envelope",
                 "measure_statistics", "configure_mask_test", "get_search_results",

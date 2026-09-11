@@ -32,6 +32,60 @@ async def test_call_returns_result():
     assert await srv._call(lambda scope: f"ok:{scope}") == "ok:FAKE_SCOPE"
 
 
+@pytest.mark.parametrize("arguments", [{}, {"verify_hardware": False}, {"verify_hardware": True}])
+@pytest.mark.parametrize("failed_stage", [None, "identity", "capabilities", "state"])
+async def test_inspect_scope_is_sequential_and_preserves_partial_results(monkeypatch, arguments, failed_stage):
+    calls = []
+    identity = "RIGOL TECHNOLOGIES,DHO814,SERIAL,00.01.05"
+    capabilities = {"model": "DHO814", "channels": ["CHAN1"]}
+    state = {"timebase": {"scale_s_div": "0.001"}, "channels": {"CHAN1": {}}, "trigger": {}}
+
+    def read(stage, value):
+        assert srv._scope_lock.locked()
+        calls.append(stage)
+        if failed_stage == stage:
+            raise _tmo()
+        return value
+
+    def read_capabilities(instrument, verify_hardware):
+        assert instrument == "FAKE_SCOPE"
+        assert verify_hardware == arguments.get("verify_hardware", False)
+        return read("capabilities", capabilities)
+
+    monkeypatch.setattr(srv, "idn", lambda instrument: read("identity", identity))
+    monkeypatch.setattr(srv, "set_driver_from_idn", lambda value: calls.append("driver"))
+    monkeypatch.setattr(srv, "get_capabilities", read_capabilities)
+    monkeypatch.setattr(srv, "get_timebase_state", lambda instrument: read("state", state["timebase"]))
+    monkeypatch.setattr(srv, "get_channel_state", lambda instrument, channel: state["channels"][channel])
+    monkeypatch.setattr(srv, "get_trigger_state", lambda instrument: state["trigger"])
+    monkeypatch.setattr(srv, "connection_info", lambda: {"transport": "TCPIP"})
+
+    result = json.loads((await srv.call_tool("inspect_scope", arguments))[0].text)
+    expected_calls = ["identity", "driver", "capabilities", "state"]
+    if failed_stage:
+        expected_calls = expected_calls[:expected_calls.index(failed_stage) + 1]
+    assert calls == expected_calls
+    assert result["complete"] is (failed_stage is None)
+    assert result["connection"] == {"transport": "TCPIP"}
+    assert result["identity"] == (None if failed_stage == "identity" else identity)
+    assert result["capabilities"] == (capabilities if failed_stage in (None, "state") else None)
+    assert result["state"] == (state if failed_stage is None else None)
+    assert list(result["errors"]) == ([failed_stage] if failed_stage else [])
+    if failed_stage:
+        assert result["errors"][failed_stage]["type"] == "VisaIOError"
+        assert result["errors"][failed_stage]["message"]
+    assert len(invalidated) == (1 if failed_stage else 0)
+
+
+async def test_inspect_scope_schema_and_safety_metadata():
+    tools = {tool.name: tool for tool in await srv.list_tools()}
+    tool = tools["inspect_scope"]
+    assert tool.input_schema["properties"]["verify_hardware"] == {"type": "boolean", "default": False}
+    assert tool.input_schema["additionalProperties"] is False
+    assert tool.annotations.read_only_hint is False
+    assert {"idn", "get_capabilities", "get_scope_state"} <= tools.keys()
+
+
 def test_large_numeric_text_is_preserved(monkeypatch, tmp_path):
     import json
     from pathlib import Path
